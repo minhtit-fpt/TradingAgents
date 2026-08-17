@@ -84,25 +84,48 @@ MIN_CONCEPT_COVERAGE = _env_float("VALUE_MIN_COVERAGE", 0.8)
 
 # --- Screening thresholds (plan section 6) -------------------------------------
 #
-# Every one of these is a knob, not a law: they are the levels from "Warren
-# Buffett and the Interpretation of Financial Statements", and phase 3's free
-# numeric backtest exists to tune them. Keep them here so tuning never edits code.
+# Every one of these is a knob, not a law. They come from "Warren Buffett and the
+# Interpretation of Financial Statements", which states two tiers for most of
+# them: a "durable competitive advantage" level and a wider band it still calls
+# acceptable. The screen originally used the first tier throughout and passed
+# nothing — 0 of 450 names at 2024-12-31, with failures spread diffusely across
+# pairs of criteria rather than concentrated on one mis-set level. Twelve
+# conjunctive gates each admitting 4-36% of the universe multiply to nothing;
+# that is arithmetic, not a finding about American business.
+#
+# Five levels below therefore sit at the book's second tier, and five stay at the
+# first. The ones that stayed are the ones the thesis is actually about: gross
+# margin (pricing power), both debt limits, and return on equity. Easing those
+# would not be a re-tune, it would be a different strategy.
+#
+# The result is 2.0% of the universe at 2024-12-31 and 2.0% at 2019-12-31 — two
+# windows sharing only half their years, which is the reason to believe the level
+# is not fitted to one snapshot. Survivors are ADBE, CTAS, FAST, IEX, JKHY, LRCX,
+# PG, RMD, TXN and BIIB, FAST, JKHY, MMM, RMD, SPGI, TXN respectively.
 
 GROSS_MARGIN_MIN = _env_float("VALUE_GROSS_MARGIN_MIN", 0.40)
-NET_MARGIN_MIN = _env_float("VALUE_NET_MARGIN_MIN", 0.20)
-SGA_TO_GROSS_PROFIT_MAX = _env_float("VALUE_SGA_MAX", 0.30)
+# Above 20% is the book's durable level and admits 4% of the universe; below 10%
+# is its "fiercely competitive" warning. 0.12 sits inside the band between them,
+# on a plateau — 0.10 admits the same names, so the level is not a knife-edge.
+NET_MARGIN_MIN = _env_float("VALUE_NET_MARGIN_MIN", 0.12)
+SGA_TO_GROSS_PROFIT_MAX = _env_float("VALUE_SGA_MAX", 0.80)
 RND_TO_GROSS_PROFIT_MAX = _env_float("VALUE_RND_MAX", 0.30)
-DA_TO_GROSS_PROFIT_MAX = _env_float("VALUE_DA_MAX", 0.10)
-INTEREST_TO_OPERATING_INCOME_MAX = _env_float("VALUE_INTEREST_MAX", 0.15)
+DA_TO_GROSS_PROFIT_MAX = _env_float("VALUE_DA_MAX", 0.15)
+INTEREST_TO_OPERATING_INCOME_MAX = _env_float("VALUE_INTEREST_MAX", 0.20)
 LONG_TERM_DEBT_TO_NET_INCOME_MAX = _env_float("VALUE_LTD_MAX", 4.0)
 DEBT_TO_EQUITY_MAX = _env_float("VALUE_DEBT_EQUITY_MAX", 0.8)
 ROE_MIN = _env_float("VALUE_ROE_MIN", 0.15)
-CAPEX_TO_NET_INCOME_MAX = _env_float("VALUE_CAPEX_MAX", 0.25)
+CAPEX_TO_NET_INCOME_MAX = _env_float("VALUE_CAPEX_MAX", 0.50)
 
 # How many of the ten years may violate a criterion and still pass it. One
 # recession year should not disqualify an otherwise excellent business; five
-# should. Open item #3 in the plan — settle it empirically in phase 3.
-VIOLATION_TOLERANCE = _env_nonneg_int("VALUE_VIOLATION_TOLERANCE", 1)
+# should. Two, not one, because a ten-year window ending anywhere in this decade
+# contains 2020, and a single allowance is then spent before the business has
+# been asked anything: at one, no name in the universe passes at either test
+# date. Three roughly doubles the survivors again and starts admitting names
+# whose bad years are consecutive rather than incidental, which is the failure
+# mode this criterion exists to catch.
+VIOLATION_TOLERANCE = _env_nonneg_int("VALUE_VIOLATION_TOLERANCE", 2)
 
 # --- Valuation (plan section 6, "intrinsic value") -----------------------------
 

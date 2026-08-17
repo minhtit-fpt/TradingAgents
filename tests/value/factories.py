@@ -63,13 +63,20 @@ def price_frame(
     end: str = "2026-06-30",
     price: float = 100.0,
     drift: float = 0.0,
+    splits=None,
 ):
-    """A yfinance-shaped OHLCV frame: business days, compounding at ``drift``/bar."""
+    """What ``market._history`` returns: a yfinance OHLCV frame plus ``AS_TRADED``.
+
+    Built through ``with_as_traded`` rather than by hand, so a test never sees a
+    frame shaped differently from the one the fetcher actually produces.
+    """
     import pandas as pd
+
+    from tradingagents.value.screen.market import with_as_traded
 
     index = pd.bdate_range(start=start, end=end)
     closes = [price * (1 + drift) ** step for step in range(len(index))]
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         {
             "Open": closes,
             "High": [c * 1.01 for c in closes],
@@ -79,6 +86,7 @@ def price_frame(
         },
         index=index,
     )
+    return with_as_traded(frame, splits)
 
 
 def facts_for(series: dict[int, dict[str, float]]) -> list[Fact]:

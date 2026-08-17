@@ -84,6 +84,28 @@ class SimulateTest(unittest.TestCase):
 
         self.assertLess(charged.end_value, free.end_value)
 
+    def test_adding_a_name_to_a_full_portfolio_is_funded_by_the_sales(self):
+        # The refusal that flattened the first ten-year run: a buy sized off
+        # portfolio value, submitted before the sells that release the cash for
+        # it. The broker checks cash at the fill and bounces the order, and the
+        # only symptom is a rebalance that quietly did not happen.
+        # The new name leads the target because the report ranks by margin of
+        # safety, so its buy is submitted before the two reductions that fund it.
+        result = simulate(
+            frames(A=0.001, B=0.001, C=0.001),
+            [("2020-01-06", ("A", "B")), ("2020-07-01", ("C", "A", "B"))],
+        )
+
+        self.assertEqual(result.rejected, 0)
+
+    def test_rotating_the_whole_portfolio_is_funded_by_the_sales(self):
+        result = simulate(
+            frames(A=0.001, B=0.001, C=0.001, D=0.001),
+            [("2020-01-06", ("A", "B")), ("2020-07-01", ("C", "D"))],
+        )
+
+        self.assertEqual(result.rejected, 0)
+
     def test_a_rebalance_date_on_a_holiday_still_happens_on_the_next_session(self):
         # 2020-07-04 was a Saturday; the schedule must not be skipped for it.
         result = simulate(frames(UP=0.001), [("2020-07-04", ("UP",))])

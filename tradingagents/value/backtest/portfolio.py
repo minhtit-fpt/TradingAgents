@@ -99,8 +99,22 @@ class Rebalance(bt.Strategy):
         if not tradable:
             return
         weight = (1.0 - CASH_BUFFER) / len(tradable)
-        for name in tradable:
+
+        # Sells before buys, always. Orders fill at the next open in submission
+        # order, and a buy is sized off portfolio *value* while the broker funds
+        # it out of *cash*. A name entering the portfolio leads the target list —
+        # the report ranks by margin of safety — so its buy would otherwise be
+        # checked before the reductions that release the cash for it, and the
+        # broker refuses it for margin. The only symptom is a rebalance that
+        # silently did not happen, which is why `rejected` is counted at all.
+        target_value = weight * self.broker.getvalue()
+        for name in sorted(tradable, key=lambda n: self._position_value(n) < target_value):
             self.order_target_percent(data=self._feeds[name], target=weight)
+
+    def _position_value(self, name: str) -> float:
+        """What the position in ``name`` is worth at today's close, or 0.0."""
+        feed = self._feeds[name]
+        return self.getposition(feed).size * feed.close[0]
 
     def _due(self, today: date) -> tuple[str, ...] | None:
         """The most recent schedule entry now due, or None if none is.

@@ -27,21 +27,21 @@ class ExcellentCompanyTest(unittest.TestCase):
 
 
 class ToleranceTest(unittest.TestCase):
-    def test_one_bad_year_is_tolerated_by_default(self):
+    def test_a_bad_year_within_the_budget_is_tolerated(self):
         series = decade()
         series[2018]["GrossProfit"] = 300.0  # 30% margin, below the 40% floor
 
-        margin = result_for(series, "GrossMargin")
+        margin = result_for(series, "GrossMargin", tolerance=1)
 
         self.assertEqual(margin.violation_years, (2018,))
         self.assertTrue(margin.passed)
 
-    def test_two_bad_years_are_not(self):
+    def test_one_bad_year_past_the_budget_is_not(self):
         series = decade()
         series[2018]["GrossProfit"] = 300.0
         series[2019]["GrossProfit"] = 300.0
 
-        margin = result_for(series, "GrossMargin")
+        margin = result_for(series, "GrossMargin", tolerance=1)
 
         self.assertEqual(margin.violation_years, (2018, 2019))
         self.assertFalse(margin.passed)
@@ -59,7 +59,7 @@ class MissingDataTest(unittest.TestCase):
         for year in (2018, 2019):
             del series[year]["Revenue"]
 
-        margin = result_for(series, "GrossMargin")
+        margin = result_for(series, "GrossMargin", tolerance=1)
 
         self.assertEqual(margin.missing_years, (2018, 2019))
         self.assertFalse(margin.passed)
@@ -113,12 +113,12 @@ class TrendTest(unittest.TestCase):
         self.assertEqual(retained.violation_years, (2020,))
         self.assertTrue(retained.passed)
 
-    def test_a_loss_year_fails_the_earnings_trend(self):
+    def test_loss_years_past_the_budget_fail_the_earnings_trend(self):
         series = decade()
         series[2018]["NetIncome"] = -10.0
         series[2019]["NetIncome"] = -10.0
 
-        self.assertFalse(result_for(series, "NetIncomeTrend").passed)
+        self.assertFalse(result_for(series, "NetIncomeTrend", tolerance=1).passed)
 
     def test_a_decade_that_ends_where_it_started_is_not_rising(self):
         series = decade(growth=0.0)

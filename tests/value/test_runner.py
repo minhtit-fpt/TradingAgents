@@ -32,6 +32,10 @@ class StubPrices:
     def annual_closes(self, ticker, years, as_of=None):
         return {}
 
+    def split_basis_factors(self, ticker, filed, as_of=None):
+        # No stub company splits, so every year is already on one basis.
+        return dict.fromkeys(filed, 1.0)
+
     def risk_free_rate(self, as_of=None):
         return self.rate
 

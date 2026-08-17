@@ -91,10 +91,17 @@ def screen_one(
 
     try:
         price = prices.close(ticker, as_of)
+        # Share counts first: everything per-share below — the EPS history, its
+        # growth fit, the median P/E, the Graham number — reads a step in the
+        # share basis as a business event unless the split is taken out first.
+        filed = db.filed_as_of(conn, ticker, "DilutedShares", as_of, years)
+        rebased = intrinsic.on_current_share_basis(
+            series, prices.split_basis_factors(ticker, filed, as_of)
+        )
         closes = prices.annual_closes(ticker, years, as_of)
-        eps = intrinsic.eps_history(series)
+        eps = intrinsic.eps_history(rebased)
         valuation = intrinsic.value(
-            series,
+            rebased,
             price,
             discount_rate,
             median_pe=market.median_pe(closes, eps),

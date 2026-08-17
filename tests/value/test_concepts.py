@@ -201,13 +201,79 @@ class DerivationTest(unittest.TestCase):
 
         self.assertEqual(values(facts, "SGA"), {2020: 42.0})
 
-    def test_a_partial_sum_is_not_reported_as_the_whole(self):
+    def test_a_selling_line_without_its_admin_half_is_not_reported_as_sga(self):
+        facts = annual_facts(payload(
+            SellingAndMarketingExpense=("USD", [duration("2020-12-31", 12.0, "2021-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "SGA"), {})
+
+    def test_a_lone_admin_line_stands_in_for_sga(self):
+        # REITs, banks and insurers report general and administrative expense
+        # with no selling line at all. Requiring the pair left them with no SG&A
+        # ratio and no way to pass criterion 3.
         facts = annual_facts(payload(
             GeneralAndAdministrativeExpense=(
                 "USD", [duration("2020-12-31", 30.0, "2021-02-10")]),
         ))
 
-        self.assertEqual(values(facts, "SGA"), {})
+        self.assertEqual(values(facts, "SGA"), {2020: 30.0})
+
+    def test_the_pair_sum_beats_the_lone_admin_line(self):
+        # Undercounting SG&A makes an expensive business look disciplined, so a
+        # filer that splits the two lines must be summed, never read as G&A only.
+        facts = annual_facts(payload(
+            GeneralAndAdministrativeExpense=(
+                "USD", [duration("2020-12-31", 30.0, "2021-02-10")]),
+            SellingExpense=("USD", [duration("2020-12-31", 12.0, "2021-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "SGA"), {2020: 42.0})
+
+    def test_a_reported_sga_is_never_replaced_by_a_component(self):
+        facts = annual_facts(payload(
+            SellingGeneralAndAdministrativeExpense=(
+                "USD", [duration("2020-12-31", 50.0, "2021-02-10")]),
+            GeneralAndAdministrativeExpense=(
+                "USD", [duration("2020-12-31", 30.0, "2021-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "SGA"), {2020: 50.0})
+
+    def test_cost_of_services_carries_a_service_business_gross_profit(self):
+        facts = annual_facts(payload(
+            Revenues=("USD", [duration("2020-12-31", 100.0, "2021-02-10")]),
+            CostOfServices=("USD", [duration("2020-12-31", 60.0, "2021-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "GrossProfit"), {2020: 40.0})
+
+    def test_total_operating_expenses_are_not_read_as_cost_of_revenue(self):
+        # CostsAndExpenses and OperatingExpenses are the whole expense base, not
+        # the cost of revenue. Subtracting either would invent a gross profit.
+        facts = annual_facts(payload(
+            Revenues=("USD", [duration("2020-12-31", 100.0, "2021-02-10")]),
+            CostsAndExpenses=("USD", [duration("2020-12-31", 90.0, "2021-02-10")]),
+            OperatingExpenses=("USD", [duration("2020-12-31", 85.0, "2021-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "CostOfRevenue"), {})
+        self.assertEqual(values(facts, "GrossProfit"), {})
+
+    def test_depreciation_and_amortization_resolves_without_depletion(self):
+        facts = annual_facts(payload(
+            DepreciationAndAmortization=("USD", [duration("2020-12-31", 25.0, "2021-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "DepreciationAmortization"), {2020: 25.0})
+
+    def test_rnd_resolves_from_the_excluding_in_process_tag(self):
+        facts = annual_facts(payload(
+            ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost=(
+                "USD", [duration("2020-12-31", 40.0, "2021-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "RnD"), {2020: 40.0})
 
 
 class RestatementTest(unittest.TestCase):
@@ -230,3 +296,36 @@ class RestatementTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShareScaleTest(unittest.TestCase):
+    """A filer tagging the share count in millions must not reach the store."""
+
+    def test_a_share_count_in_millions_is_dropped_not_rescaled(self):
+        # Bruker filed 156.6 for 156,600,000. Kept, it makes EPS a million
+        # times too large; rescaled, it is a guess about what was meant.
+        facts = annual_facts(payload(
+            WeightedAverageNumberOfDilutedSharesOutstanding=("shares", [
+                duration("2018-12-31", 157_200_000.0, "2019-02-10", accn="a-1"),
+                duration("2019-12-31", 156.6, "2020-02-10", accn="a-2"),
+            ]),
+        ))
+
+        self.assertEqual(values(facts, "DilutedShares"), {2018: 157_200_000.0})
+
+    def test_a_plausible_share_count_survives(self):
+        facts = annual_facts(payload(
+            WeightedAverageNumberOfDilutedSharesOutstanding=("shares", [
+                duration("2019-12-31", 1_500_000.0, "2020-02-10"),
+            ]),
+        ))
+
+        self.assertEqual(values(facts, "DilutedShares"), {2019: 1_500_000.0})
+
+    def test_the_floor_applies_to_no_other_concept(self):
+        # A company can genuinely earn 156.6 dollars; it cannot have 156.6 shares.
+        facts = annual_facts(payload(
+            NetIncomeLoss=("USD", [duration("2019-12-31", 156.6, "2020-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "NetIncome"), {2019: 156.6})

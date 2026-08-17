@@ -135,6 +135,26 @@ def series_as_of(
     return series
 
 
+def filed_as_of(
+    conn: sqlite3.Connection,
+    ticker: str,
+    concept: str,
+    as_of: str,
+    years: int | None = None,
+) -> dict[int, str]:
+    """Per fiscal year, the filing date of the figure ``series_as_of`` returned.
+
+    A share count is only meaningful alongside the date it was filed on: a
+    split between two filings puts two years of the same series on two
+    different bases, and this is what lets the screen put them back together.
+    """
+    return {
+        row["fiscal_year"]: row["filed"]
+        for row in facts_as_of(conn, ticker, as_of, years)
+        if row["concept"] == concept
+    }
+
+
 def record_screen(
     conn: sqlite3.Connection,
     ticker: str,

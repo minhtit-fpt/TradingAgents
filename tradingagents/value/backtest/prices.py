@@ -23,7 +23,14 @@ loses its yfinance price series, so silence here reads as "never existed".
 from datetime import date, timedelta
 from typing import Any
 
-from ..screen.market import TREASURY_10Y_TICKER, PriceError, _history
+from ..screen.market import (
+    AS_TRADED,
+    TREASURY_10Y_TICKER,
+    PriceError,
+    _history,
+    basis_factors,
+    year_ends,
+)
 
 
 class History:
@@ -75,21 +82,32 @@ class History:
         return self._frames[key]
 
     def close(self, ticker: str, as_of: str | None = None) -> float:
-        """Last close at or before ``as_of``. Raises rather than guessing."""
+        """Last as-traded close at or before ``as_of``. Raises rather than guessing.
+
+        ``AS_TRADED``, not ``Close``: the valuation divides this by an EPS taken
+        from the filings as they stood, so a split that happened after ``as_of``
+        must not have been applied to it. ``frame()`` still hands the simulator
+        the adjusted column, which is the one that survives a split cleanly.
+        """
         rows = self._until(ticker, as_of)
         if rows.empty:
             raise PriceError(f"no price for {ticker} at or before {as_of or self._end}")
-        return float(rows["Close"].iloc[-1])
+        return float(rows[AS_TRADED].iloc[-1])
 
     def annual_closes(self, ticker: str, years: int, as_of: str | None = None) -> dict[int, float]:
         """Last close of each of the ``years`` calendar years up to ``as_of``."""
         cutoff = date.fromisoformat(as_of) if as_of else self._end
-        rows = self._until(ticker, as_of)
-        closes: dict[int, float] = {}
-        for stamp, row in rows.iterrows():
-            if stamp.year > cutoff.year - years:
-                closes[stamp.year] = float(row["Close"])
-        return closes
+        closes = year_ends(self.frame(ticker), cutoff)
+        return {
+            year: close for year, close in closes.items() if year > cutoff.year - years
+        }
+
+    def split_basis_factors(
+        self, ticker: str, filed: dict[int, str], as_of: str | None = None
+    ) -> dict[int, float]:
+        """Per fiscal year, what to multiply its filed share count by."""
+        cutoff = date.fromisoformat(as_of) if as_of else self._end
+        return basis_factors(self.frame(ticker), filed, cutoff) if filed else {}
 
     def risk_free_rate(self, as_of: str | None = None) -> float:
         """10-year Treasury yield **as it stood on that date**, not today's.
