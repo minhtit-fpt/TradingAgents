@@ -118,6 +118,18 @@ DISCOUNT_RATE_FLOOR = _env_float("VALUE_DISCOUNT_FLOOR", 0.04)
 # The alert trigger: buy-side margin of safety against computed intrinsic value.
 MARGIN_OF_SAFETY_MIN = _env_float("VALUE_MOS_MIN", 0.30)
 
+# --- Backtest (plan section 10) ------------------------------------------------
+#
+# The tier-1 backtest costs nothing but wall-clock time, so these are tuning
+# knobs rather than budget decisions.
+
+BACKTEST_START_CASH = _env_float("VALUE_BACKTEST_CASH", 100_000.0)
+# 10 bps per side. A quarterly-rebalanced screen holding tens of names trades
+# rarely, but a backtest run at zero commission is a backtest of a broker that
+# does not exist.
+BACKTEST_COMMISSION = _env_float("VALUE_BACKTEST_COMMISSION", 0.001)
+BACKTEST_BENCHMARK = os.environ.get("VALUE_BACKTEST_BENCHMARK", "SPY")
+
 # Hard USD ceilings. The per-run cap bounds a runaway loop inside one job; the
 # per-month cap bounds the whole deployment. Both fail closed (see budget.py).
 RUN_BUDGET_USD = _env_float("VALUE_RUN_BUDGET_USD", 2.0)
