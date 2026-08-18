@@ -432,6 +432,76 @@ the entry point calls and not the entry point.
 
 ---
 
+### 6. Is phase 6 answerable at all?  *(measurement, run before deciding to build)*
+
+Asked before writing any analyst code, because "run it and see" is how items 7,
+8 and 9 each produced a verdict that a defect in the test later overturned.
+
+Phase 6 asks whether an LLM veto improves outcomes **over the numeric screen
+alone**. That is a *paired* comparison — filtered book against unfiltered book
+over the same dates — so its noise floor is not the ~10-point strategy-vs-SPY
+interval. It is the interval around the difference, and that depends on how much
+of the book the veto actually changes.
+
+*Method.* Veto names at random at rate v. A random veto has no skill, so
+whatever interval the bootstrap puts around its zero effect is the noise floor
+at that rate: the **minimum detectable effect**. Then veto by oracle — drop the
+picks with the worst forward return — to bound what a *perfect* veto could earn.
+Look-ahead by construction and declared as such, in the same spirit as the
+residual stub sweep. Both arms reuse `numeric.construct` and
+`portfolio.simulate`; the veto is applied to `picks`, so a vetoed name never
+enters the book. 10 reps per cell, $0 in tokens.
+
+Oracle horizons of 1, 4 and 8 rebalance periods, because a one-quarter oracle
+vetoes a name for a bad quarter inside a good multi-year hold. The first pass ran
+at one quarter only and printed a *negative* ceiling, which is the tell that it
+was not a ceiling at all.
+
+| exit | veto | book cut | MDE | oracle @1q | @4q | @8q | verdict |
+|---|---|---|---|---|---|---|---|
+| quality | 10% | 1% | +0.66% | +0.36% | +0.21% | +0.27% | below MDE |
+| quality | 25% | 5% | +1.20% | +0.93% | +0.94% | +0.61% | below MDE |
+| quality | 50% | 12% | +2.04% | −3.01% | −1.60% | −1.63% | below MDE |
+| rebalance | 10% | 13% | +1.83% | **+5.02%** | −0.07% | −0.88% | 1q only |
+| rebalance | 25% | 34% | +3.78% | **+10.81%** | +1.69% | −0.09% | 1q only |
+| rebalance | 50% | 72% | +7.57% | +5.02% | −1.10% | −2.75% | below MDE |
+
+**Phase 6 is not answerable, and the reason is the horizon rather than the
+sample size.**
+
+1. **Under the step-5 quality exit the veto has no leverage.** A 25% veto cuts
+   5% of the book: incumbents carry forward regardless, so an entry-time filter
+   barely touches what is held. Even a perfect veto sits below the noise floor
+   at every rate. Any phase 6 would have to run on `--exit rebalance`, which
+   step 5 showed costs nothing to give up.
+2. **The only headroom is at a one-quarter horizon** — +5.02% and +10.81%
+   against floors of +1.83% and +3.78%, i.e. a filter would need ~35% of a
+   perfect veto. But that oracle is a next-quarter *price* predictor.
+3. **Every long-horizon oracle is below its floor.** At 4 and 8 periods the best
+   perfect veto earns +1.69% against a +3.78% floor, and is negative in five of
+   six cells. A veto that knows which businesses do worse over two to four years
+   — which is exactly what reading Item 1, 1A and 7 is for — cannot be separated
+   from noise on this apparatus even when it is right every time.
+4. So the headroom that exists is on the horizon tier 3 has no claim to, and the
+   horizon tier 3 is designed for has no headroom. Building the analyst to
+   *measure* an edge is spending against a question this apparatus cannot answer.
+5. **A 50% veto is self-defeating** at any horizon: cutting 72% of the book makes
+   the cutting itself the dominant noise source. Useful range is 10-25%.
+
+*Limits of this measurement, stated rather than buried.* 10 reps per cell is thin
+and the medians move a few tenths between seeds. The oracle vetoes only at entry,
+so a real ceiling — one that could also time exits — is higher than these numbers.
+The `min 5` rule interacts with heavy vetoing, which is part of why the 50% rows
+go negative. None of that changes the ranking of ceiling against floor at the long
+horizons, which is where the conclusion rests.
+
+*Not shipped.* The probe is an analysis script, not a product module, so it has no
+tests and does not live in `tradingagents/value/`. The method above is sufficient
+to rebuild it; it is worth promoting to `backtest/power.py` with tests only if a
+future phase needs to re-ask this question.
+
+---
+
 ## Refuse list
 
 Degrees of freedom are already spent. Do not:
