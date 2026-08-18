@@ -13,9 +13,11 @@ import sys
 from datetime import date
 
 from ..config import HISTORY_YEARS, MIN_CONCEPT_COVERAGE
+from ..edgar import tickermap
 from ..edgar.client import SecClient, SecRequestError
-from ..edgar.companyfacts import companies, fetch_companyfacts
+from ..edgar.companyfacts import Company, companies, fetch_companyfacts
 from ..edgar.concepts import CONCEPT_NAMES, annual_facts
+from ..edgar.tickermap import normalise
 from ..store import db
 
 
@@ -54,13 +56,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.tickers:
-        wanted = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
-        by_ticker = {c.ticker: c for c in companies(client)}
+        wanted = [normalise(t) for t in args.tickers.split(",") if t.strip()]
+        # The merged map, not company_tickers.json alone: the historical index
+        # members phase 4b step 2 has to reach are mostly absent from that file
+        # and present in include/ticker.txt.
+        by_ticker = tickermap.load(client)
         missing = [t for t in wanted if t not in by_ticker]
         if missing:
-            print(f"error: not listed in EDGAR: {', '.join(missing)}", file=sys.stderr)
+            print(f"error: no CIK in either SEC ticker file for: {', '.join(missing)}",
+                  file=sys.stderr)
             return 2
-        targets = [by_ticker[t] for t in wanted]
+        targets = [Company(ticker=t, cik=by_ticker[t], name="") for t in wanted]
     else:
         targets = companies(client)[: args.limit]
 
