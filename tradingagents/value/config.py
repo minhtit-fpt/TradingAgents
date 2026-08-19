@@ -202,3 +202,16 @@ MODEL_PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "deepseek-v4-flash": (0.28, 0.42),
     "deepseek-v4-pro": (0.55, 2.19),
 }
+
+# --- Value analyst, tier 3 (plan sections 7 and 8) -----------------------------
+
+# The deep model, because this is the one call in the system that is asked to
+# read prose and disagree with the numbers. Tier 3 fires on a handful of names a
+# quarter, so the per-token difference against the flash model is noise next to
+# the cost of a shallow read.
+ANALYST_MODEL = os.environ.get("VALUE_ANALYST_MODEL", "deepseek-v4-pro")
+
+# Per-section input ceiling. A full 10-K is routinely 300k+ tokens and DeepSeek's
+# context is a fraction of that, so Items 1, 1A and 7 are each truncated to this
+# and what was dropped is recorded rather than hidden (plan section 8).
+SECTION_TOKEN_BUDGET = _env_int("VALUE_SECTION_TOKEN_BUDGET", 12_000)
