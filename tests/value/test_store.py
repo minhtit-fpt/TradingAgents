@@ -92,5 +92,21 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(db.coverage_ratio(report, 10), 0.0)
 
 
+class CikLookupTest(unittest.TestCase):
+    """EDGAR is addressed by CIK; phase 6 reaches for filings ticker by ticker."""
+
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        self.addCleanup(self.conn.close)
+
+    def test_the_cik_comes_back_for_a_ticker_the_store_holds(self):
+        db.upsert_facts(self.conn, "ACME", 1234567, [fact("NetIncome", 2024)])
+
+        self.assertEqual(db.cik_for(self.conn, "acme"), 1234567)
+
+    def test_a_ticker_with_no_facts_is_none_rather_than_a_raise(self):
+        self.assertIsNone(db.cik_for(self.conn, "NOBODY"))
+
+
 if __name__ == "__main__":
     unittest.main()

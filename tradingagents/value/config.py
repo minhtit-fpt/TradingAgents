@@ -192,15 +192,21 @@ TICKER_MAP_PATH = _env_path("VALUE_TICKER_MAP_PATH", VALUE_HOME / "ticker_cik.js
 RUN_BUDGET_USD = _env_float("VALUE_RUN_BUDGET_USD", 2.0)
 MONTH_BUDGET_USD = _env_float("VALUE_MONTH_BUDGET_USD", 10.0)
 
-# USD per million tokens, as (input, output).
+# USD per million tokens, as (input cache-miss, output).
 #
-# VERIFY against DeepSeek's current pricing page before phase 6 — these are
-# planning estimates (open item #2 in the plan). A model absent from this table
-# raises instead of being charged $0: an untracked model is exactly how a budget
-# cap silently stops capping.
+# Verified against DeepSeek's pricing page on 2026-08-19 (open item #2 in the
+# plan, closed here because phase 6 spends against these numbers). The published
+# table has two tiers: peak (01:00-04:00 and 06:00-10:00 UTC) and off-peak at
+# exactly half. **The peak rates are the ones below.** Charging the off-peak
+# price would let a run that happens to fall inside the peak window spend twice
+# its cap before the cap noticed, which is the one failure mode a budget exists
+# to prevent — an over-estimate merely stops early.
+#
+# A model absent from this table raises instead of being charged $0: an
+# untracked model is exactly how a budget cap silently stops capping.
 MODEL_PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
-    "deepseek-v4-flash": (0.28, 0.42),
-    "deepseek-v4-pro": (0.55, 2.19),
+    "deepseek-v4-flash": (0.44, 1.32),
+    "deepseek-v4-pro": (1.32, 3.96),
 }
 
 # --- Value analyst, tier 3 (plan sections 7 and 8) -----------------------------

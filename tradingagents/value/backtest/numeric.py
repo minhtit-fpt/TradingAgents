@@ -113,6 +113,73 @@ class Snapshot:
         return tuple(ticker for ticker, _ in ranked[:count])
 
 
+class UniverseError(RuntimeError):
+    """The point-in-time universe could not be resolved.
+
+    Raised rather than fallen back from: screening the store's full ticker list
+    instead would silently restore the survivorship bias phase 4b removed, and a
+    biased run that says nothing about being biased is the item-8 defect.
+    """
+
+
+def resolve_universe(
+    kind: str,
+    dates: Sequence[str],
+    *,
+    membership_path: str | None = None,
+    db_path: str | None = None,
+) -> tuple[Callable[[str], Sequence[str]] | None, list[str]]:
+    """The per-date universe callable for ``snapshots``, plus lines to print.
+
+    ``None`` for ``kind="store"`` — the survivorship-biased static list, kept
+    only to reproduce the pre-4b runs. Shared with the phase-6 sampled backtest
+    so both replays screen the identical universe; two definitions of "the
+    universe" would make the two runs incomparable in a way nothing prints.
+    """
+    if kind != "index":
+        return None, []
+
+    try:
+        members = membership.load(membership_path)
+    except membership.MembershipError as exc:
+        raise UniverseError(str(exc)) from exc
+    uncovered = [d for d in dates if not members.covers(d)]
+    if uncovered:
+        raise UniverseError(
+            f"membership data ({members.span[0]} .. {members.span[1]}) does not "
+            f"cover {len(uncovered)} rebalance dates, first {uncovered[0]}; "
+            "narrow --start/--end or refresh the file"
+        )
+
+    # Rewrite historical tickers onto whatever ticker the store holds that CIK
+    # under (BK -> BNY, GOOGL -> GOOG). Without this a rename reads as a missing
+    # company and rejoins the survivorship hole it never left.
+    try:
+        mapping = tickermap.load(SecClient())
+    except (ValueError, OSError) as exc:
+        raise UniverseError(
+            f"cannot resolve ticker identity: {exc}. Aliasing changes which names "
+            "are screened, so it is not skipped silently — set VALUE_SEC_USER_AGENT, "
+            "or run --universe store to reproduce the pre-4b behaviour."
+        ) from exc
+
+    conn = db.connect(db_path)
+    try:
+        alias_map = identity.aliases(conn, mapping)
+    finally:
+        conn.close()
+    if not alias_map:
+        return members.as_of, []
+
+    def universe(day: str) -> tuple[str, ...]:
+        return identity.apply(members.as_of(day), alias_map)
+
+    return universe, [
+        f"identity: {len(alias_map)} historical tickers aliased onto the "
+        "tickers the store holds them under"
+    ]
+
+
 def quarter_ends(start: str, end: str) -> list[str]:
     """Quarter-end dates within ``[start, end]``.
 
@@ -545,49 +612,15 @@ def main(argv: list[str] | None = None) -> int:
     # Resolve the universe before any screening: a missing membership file an
     # hour into the run is an hour wasted, and falling back to the static list
     # would quietly restore the bias phase 4b exists to remove.
-    as_of_universe = None
-    if args.universe == "index":
-        try:
-            members = membership.load(args.membership)
-        except membership.MembershipError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 2
-        uncovered = [d for d in dates if not members.covers(d)]
-        if uncovered:
-            print(
-                f"error: membership data ({members.span[0]} .. {members.span[1]}) does not "
-                f"cover {len(uncovered)} rebalance dates, first {uncovered[0]}; "
-                "narrow --start/--end or refresh the file",
-                file=sys.stderr,
-            )
-            return 2
-        as_of_universe = members.as_of
-
-        # Rewrite historical tickers onto whatever ticker the store holds that
-        # CIK under (BK -> BNY, GOOGL -> GOOG). Without this a rename reads as a
-        # missing company and rejoins the survivorship hole it never left.
-        try:
-            mapping = tickermap.load(SecClient())
-        except (ValueError, OSError) as exc:
-            print(
-                f"error: cannot resolve ticker identity: {exc}. Aliasing changes which "
-                "names are screened, so it is not skipped silently — set "
-                "VALUE_SEC_USER_AGENT, or run --universe store to reproduce the "
-                "pre-4b behaviour.",
-                file=sys.stderr,
-            )
-            return 2
-        conn = db.connect(args.db)
-        try:
-            alias_map = identity.aliases(conn, mapping)
-        finally:
-            conn.close()
-        if alias_map:
-            print(f"identity: {len(alias_map)} historical tickers aliased onto the "
-                  "tickers the store holds them under")
-
-            def as_of_universe(day: str) -> tuple[str, ...]:
-                return identity.apply(members.as_of(day), alias_map)
+    try:
+        as_of_universe, notes = resolve_universe(
+            args.universe, dates, membership_path=args.membership, db_path=args.db
+        )
+    except UniverseError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    for note in notes:
+        print(note)
 
     # Prices must reach back a decade before the first rebalance: the valuation
     # wants ten years of year-end closes at that date, not at the last one.

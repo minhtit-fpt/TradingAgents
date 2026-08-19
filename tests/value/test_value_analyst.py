@@ -161,8 +161,10 @@ class AssessTest(unittest.TestCase):
     def test_the_call_is_charged_against_the_budget(self):
         self._assess(_FakeLLM())
 
-        # 30k in at $0.55/Mtok + 600 out at $2.19/Mtok.
-        self.assertAlmostEqual(self.budget.run_spend_usd, 0.0165 + 0.001314, places=6)
+        # 30k in at $1.32/Mtok + 600 out at $3.96/Mtok — DeepSeek's peak rates,
+        # hardcoded on purpose: a silent edit to MODEL_PRICES_USD_PER_MTOK should
+        # break a test rather than quietly change what every cap is worth.
+        self.assertAlmostEqual(self.budget.run_spend_usd, 0.0396 + 0.002376, places=6)
 
     def test_an_unparsed_response_raises_instead_of_falling_back_to_prose(self):
         llm = _FakeLLM({"parsed": None, "raw": _Raw(), "parsing_error": "no tool call"})
