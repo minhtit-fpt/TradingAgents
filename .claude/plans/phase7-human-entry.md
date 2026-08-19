@@ -98,3 +98,24 @@ the one phase 4b showed does not beat SPY. The render says so on the line.
 
 This module produces research output. It executes nothing and recommends
 nothing.
+
+## Result
+
+Built as `tradingagents/value/report.py` (one module, one test file, nothing else
+touched). Verified against the live store on 2026-08-19 with PG:
+
+- Free path: 12/12 blocking criteria pass, criteria-clean share 96%, and the
+  render names FY2019 as the year five separate criteria were violated — the
+  Gillette writedown year, which is exactly the detail a `passed: True` hides.
+- Price 143.45 against intrinsic 186.42, MoS +23.1%, below the 30% trigger.
+  **Section 3's answer: 130.49, or 9.0% below today.** That is the number the
+  operator was previously waiting on an alert for.
+- Paid path (`--read-filing`): read the FY2026 10-K filed 2026-08-04 for
+  **$0.0490**. Verdict `caution`, moat wide but **eroding** — and it named the
+  Glad JV gain sitting in non-operating income, the same $12.8B Gillette
+  intangible with <10% headroom that phase 6 found, Walmart at ~16% of sales, and
+  its own truncated MD&A as an evidence gap.
+
+The `caution` does not remove the entry price, which is the whole design: phase 6
+showed `caution` covers 82% of this screen's picks, so as a veto it is useless and
+as a paragraph the operator reads before deciding it is not.

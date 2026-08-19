@@ -18,7 +18,7 @@ Python ≥3.10. Entry points: the `tradingagents` CLI (`cli/main.py`) and
 |---|---|---|---|
 | 1 | Stock graph | `tradingagents/graph/`, `tradingagents/agents/` | short / medium term |
 | 2 | Crypto graph | same pipeline, fundamentals analyst filtered out (`cli/utils.py`) | short / medium term |
-| 3 | **Value module** | `tradingagents/value/` *(planned, not yet built)* | **long term** |
+| 3 | **Value module** | `tradingagents/value/` *(phases 1-7 built)* | **long term** |
 
 ### Isolation rule (hard requirement)
 
@@ -42,8 +42,16 @@ Conversely, when working on subsystems 1 or 2, do not reach into
 
 **Plan for subsystem 3:**
 [.claude/plans/long-term-value-investing.md](.claude/plans/long-term-value-investing.md).
-Read it before touching anything under `tradingagents/value/`. It is currently
-awaiting approval — no implementation has started.
+Read it before touching anything under `tradingagents/value/`, together with the
+phase findings beside it: `phase4-findings.md`, `phase4b-clean-universe.md`,
+`phase6-llm-veto.md`, `phase7-human-entry.md`. Two of them are stop conditions —
+the numeric strategy does not beat SPY (4b) and an automated LLM veto at entry
+does not earn its cost (6) — so the module produces evidence for an operator who
+decides, not signals that act. The on-demand dossier is that surface:
+
+```bash
+python -m tradingagents.value.report --ticker PG --read-filing
+```
 
 ## Commands
 
