@@ -236,3 +236,17 @@ def coverage_ratio(report: dict[str, dict], expected_years: int) -> float:
 def tickers(conn: sqlite3.Connection) -> list[str]:
     """Every ticker present in the store."""
     return [row[0] for row in conn.execute("SELECT DISTINCT ticker FROM facts ORDER BY ticker")]
+
+
+def cik_for(conn: sqlite3.Connection, ticker: str) -> int | None:
+    """The CIK the store holds ``ticker`` under, or ``None`` if it holds none.
+
+    EDGAR is addressed by CIK, not by ticker — a filing lookup needs this, and
+    the store already carries it on every fact. ``None`` rather than a raise:
+    a ticker with no facts is an ordinary outcome for a caller iterating over a
+    historical index, and the caller reports it by name.
+    """
+    row = conn.execute(
+        "SELECT cik FROM facts WHERE ticker = ? LIMIT 1", (ticker.upper(),)
+    ).fetchone()
+    return int(row["cik"]) if row else None
