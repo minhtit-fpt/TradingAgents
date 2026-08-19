@@ -30,6 +30,20 @@ def _env_int(name: str, default: int) -> int:
     return value
 
 
+def _env_nonneg_int(name: str, default: int) -> int:
+    """Like ``_env_int`` but admits zero — tolerating no violation-year is valid."""
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid value for {name}: expected an integer, got {raw!r}") from exc
+    if value < 0:
+        raise ValueError(f"Invalid value for {name}: must not be negative, got {value}")
+    return value
+
+
 def _env_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     if raw is None or raw == "":
@@ -67,6 +81,42 @@ HISTORY_YEARS = _env_int("VALUE_HISTORY_YEARS", 10)
 # this it is excluded rather than screened on partial data (plan section 9.6):
 # a ratio computed from missing inputs is a confidently wrong number.
 MIN_CONCEPT_COVERAGE = _env_float("VALUE_MIN_COVERAGE", 0.8)
+
+# --- Screening thresholds (plan section 6) -------------------------------------
+#
+# Every one of these is a knob, not a law: they are the levels from "Warren
+# Buffett and the Interpretation of Financial Statements", and phase 3's free
+# numeric backtest exists to tune them. Keep them here so tuning never edits code.
+
+GROSS_MARGIN_MIN = _env_float("VALUE_GROSS_MARGIN_MIN", 0.40)
+NET_MARGIN_MIN = _env_float("VALUE_NET_MARGIN_MIN", 0.20)
+SGA_TO_GROSS_PROFIT_MAX = _env_float("VALUE_SGA_MAX", 0.30)
+RND_TO_GROSS_PROFIT_MAX = _env_float("VALUE_RND_MAX", 0.30)
+DA_TO_GROSS_PROFIT_MAX = _env_float("VALUE_DA_MAX", 0.10)
+INTEREST_TO_OPERATING_INCOME_MAX = _env_float("VALUE_INTEREST_MAX", 0.15)
+LONG_TERM_DEBT_TO_NET_INCOME_MAX = _env_float("VALUE_LTD_MAX", 4.0)
+DEBT_TO_EQUITY_MAX = _env_float("VALUE_DEBT_EQUITY_MAX", 0.8)
+ROE_MIN = _env_float("VALUE_ROE_MIN", 0.15)
+CAPEX_TO_NET_INCOME_MAX = _env_float("VALUE_CAPEX_MAX", 0.25)
+
+# How many of the ten years may violate a criterion and still pass it. One
+# recession year should not disqualify an otherwise excellent business; five
+# should. Open item #3 in the plan — settle it empirically in phase 3.
+VIOLATION_TOLERANCE = _env_nonneg_int("VALUE_VIOLATION_TOLERANCE", 1)
+
+# --- Valuation (plan section 6, "intrinsic value") -----------------------------
+
+PROJECTION_YEARS = _env_int("VALUE_PROJECTION_YEARS", 10)
+# Caps on optimism. A 40% fitted growth rate is a fluke being extrapolated for a
+# decade, and a 40x terminal multiple is the market's mood, not the business.
+GROWTH_RATE_CAP = _env_float("VALUE_GROWTH_CAP", 0.15)
+TERMINAL_PE_CAP = _env_float("VALUE_TERMINAL_PE_CAP", 15.0)
+# Discounting at a 1% Treasury yield values a stable earner at absurd multiples,
+# so the discount rate is floored regardless of what the bond market is doing.
+DISCOUNT_RATE_FLOOR = _env_float("VALUE_DISCOUNT_FLOOR", 0.04)
+
+# The alert trigger: buy-side margin of safety against computed intrinsic value.
+MARGIN_OF_SAFETY_MIN = _env_float("VALUE_MOS_MIN", 0.30)
 
 # Hard USD ceilings. The per-run cap bounds a runaway loop inside one job; the
 # per-month cap bounds the whole deployment. Both fail closed (see budget.py).

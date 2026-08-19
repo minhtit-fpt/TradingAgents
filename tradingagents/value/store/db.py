@@ -36,6 +36,17 @@ CREATE TABLE IF NOT EXISTS facts (
 
 CREATE INDEX IF NOT EXISTS facts_point_in_time
     ON facts (ticker, concept, fiscal_year, filed);
+
+CREATE TABLE IF NOT EXISTS screen_results (
+    ticker          TEXT NOT NULL,
+    as_of           TEXT NOT NULL,
+    passed          INTEGER NOT NULL,
+    failed_criteria TEXT NOT NULL,
+    intrinsic_value REAL,
+    price           REAL,
+    mos_pct         REAL,
+    PRIMARY KEY (ticker, as_of)
+);
 """
 
 
@@ -105,6 +116,65 @@ def facts_as_of(
     # Keep the most recent ``window`` fiscal years the data actually contains.
     keep = sorted({row["fiscal_year"] for row in rows})[-window:]
     return [row for row in rows if row["fiscal_year"] in keep]
+
+
+def series_as_of(
+    conn: sqlite3.Connection,
+    ticker: str,
+    as_of: str,
+    years: int | None = None,
+) -> dict[int, dict[str, float]]:
+    """``facts_as_of`` reshaped as ``{fiscal_year: {concept: value}}``.
+
+    The screen reasons year by year across concepts, so it wants rows pivoted.
+    Point-in-time filtering already happened upstream; this only reshapes.
+    """
+    series: dict[int, dict[str, float]] = {}
+    for row in facts_as_of(conn, ticker, as_of, years):
+        series.setdefault(row["fiscal_year"], {})[row["concept"]] = row["value"]
+    return series
+
+
+def record_screen(
+    conn: sqlite3.Connection,
+    ticker: str,
+    as_of: str,
+    passed: bool,
+    failed_criteria: Iterable[str],
+    intrinsic_value: float | None = None,
+    price: float | None = None,
+    mos_pct: float | None = None,
+) -> None:
+    """Write one screen verdict, replacing any earlier run for the same day.
+
+    Keyed on (ticker, as_of) so a re-run — retry, reboot, a second cron firing —
+    overwrites rather than accumulating. Phase 7's alert dedupe depends on this
+    row already existing before anything is sent.
+    """
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO screen_results "
+            "(ticker, as_of, passed, failed_criteria, intrinsic_value, price, mos_pct) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                ticker.upper(),
+                as_of,
+                int(passed),
+                ",".join(failed_criteria),
+                intrinsic_value,
+                price,
+                mos_pct,
+            ),
+        )
+
+
+def screen_rows(conn: sqlite3.Connection, as_of: str) -> list[sqlite3.Row]:
+    """Every verdict recorded for ``as_of``, best margin of safety first."""
+    return conn.execute(
+        "SELECT * FROM screen_results WHERE as_of = ? "
+        "ORDER BY mos_pct IS NULL, mos_pct DESC, ticker",
+        (as_of,),
+    ).fetchall()
 
 
 def coverage(
