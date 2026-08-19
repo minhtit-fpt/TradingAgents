@@ -143,5 +143,43 @@ class NonBlockingTest(unittest.TestCase):
         self.assertEqual(result.failed_criteria, ())
 
 
+class QualityScoreTest(unittest.TestCase):
+    """The ranking key for phase 4b step 4: how *sustained*, not how good once."""
+
+    def test_a_clean_decade_scores_one(self):
+        self.assertEqual(criteria.evaluate(decade()).quality, 1.0)
+
+    def test_one_bad_year_costs_one_slot_of_twelve_blocking_criteria(self):
+        series = decade()
+        # Capex feeds exactly one criterion, so this is one bad (criterion, year).
+        series[2020]["Capex"] = 1e9
+
+        score = criteria.evaluate(series, tolerance=1).quality
+
+        # 12 blocking criteria over 10 years: one bad year on one criterion.
+        self.assertAlmostEqual(score, 1.0 - 1 / 120, places=6)
+
+    def test_a_broken_decade_scores_below_a_clean_one_even_when_both_pass(self):
+        series = decade()
+        series[2020]["Capex"] = 1e9
+
+        loose = criteria.evaluate(series, tolerance=2)
+
+        self.assertTrue(loose.passed)
+        self.assertLess(loose.quality, criteria.evaluate(decade()).quality)
+
+    def test_a_short_history_is_scored_as_unevaluated_not_as_clean(self):
+        short = {year: facts for year, facts in decade().items() if year >= 2020}
+
+        score = criteria.evaluate(short).quality
+
+        # Five of ten years missing on every blocking criterion: exactly half the
+        # checks are unevaluated, and unevaluated is not clean.
+        self.assertAlmostEqual(score, 0.5, places=6)
+
+    def test_the_score_never_goes_negative(self):
+        self.assertGreaterEqual(criteria.evaluate({}).quality, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

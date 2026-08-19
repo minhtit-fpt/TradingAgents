@@ -348,3 +348,225 @@ keep spending.
 **Recommendation: do not proceed to the LLM tiers.** Either extend the history
 to 2006 and re-run — the only evidence that could overturn this — or stop, which
 is what the plan says phase 4 is for.
+---
+
+### 8. The gate verdict was measuring the data ceiling, not the strategy
+
+Item 7 recommended stopping, on one remaining objection: the window contained no
+credit event, and only 2008-09 could overturn it. Chasing that objection is what
+exposed the verdict as unsound.
+
+**2008-09 is unreachable, and not for a fixable reason.** The store's `filed`
+dates run `2009-10-27 .. 2026-08-14` — XBRL began in 2009, so no filing exists
+before then to be point-in-time visible. A ten-year window makes the earliest
+honest as-of date roughly 2016:
+
+```
+screenable universe, years=10
+2009/2011/2013   0        2015    6        2016   59        2018   84
+2019           292        2024  450
+exclusion reasons at 2011: 427 "no 10-K facts as of this date",
+                           258 "only 4 of 10 fiscal years", 183 "only 5 of 10"
+```
+
+The 2006-2026 run confirms it costs nothing to know: 39 of 80 rebalance dates
+screened zero names, and the trade count, hit rate and drawdown came back
+*identical* to the 2016-2026 run (14/11/10/9/9 trades, 47.6/44.9/42.8/39.7/56.5%
+drawdown). CAGR fell to +2.07% purely from spreading the same trades over twenty
+years with ten of them in cash. Reaching 2008 would require dropping the
+`filed <= as_of` filter, which is not a longer backtest but a look-ahead one.
+
+**What the per-date detail shows instead.**
+
+```
+2016-03-31 .. 2016-12-31   passed=1  — MMM
+2017-03-31 .. 2018-12-31   passed=1  — BIIB  (+61% .. +38% MoS)
+2019-03-31                 passed=5
+2022-09-30                 passed=9
+```
+
+The portfolio held **one name** for the first three years of the window, at 100%
+of NAV, through Biogen's aducanumab collapse. The 47.6% drawdown that item 7
+called the damning line is that single position. Items 6 and 7 each recorded half
+of this — item 6 flagged BIIB as a growth rate pinned at the cap walking into a
+patent cliff, item 7 flagged the drawdown — without connecting them. Nothing in
+the 2016-2018 stretch was a test of whether a portfolio of quality businesses
+protects capital, because there was no portfolio. The universe was 53-84 names,
+crippled by the same XBRL ceiling.
+
+**Control: the same strategy over 2019-2026, where the universe is complete.**
+
+| MoS trigger | CAGR | vs SPY | max DD | trades | hit rate |
+|---|---|---|---|---|---|
+| 0% | +8.28% | -7.12% | **31.3%** | 14 | 79% |
+| 20% | +8.92% | -6.48% | 36.3% | 10 | 80% |
+| 30% (configured) | +5.87% | -9.53% | 39.7% | 8 | 75% |
+| SPY | +15.40% | — | 34.1% | — | — |
+
+Averages 410 screened and 8.0 passed per date. Two things fall out. The quality
+screen **did** protect — 31.3% against the index's 34.1% — so item 7's central
+claim is withdrawn. And the margin-of-safety overlay subtracts on both axes:
+tightening it from 0% to 30% costs 2.4 points of CAGR and adds 8.4 points of
+drawdown. That is item 4 surfacing as a return: an intrinsic value biased low by
+a one-sided terminal cap ranks names by noise, so selecting on it is worse than
+not selecting.
+
+**Buying back the lost decade with a shorter history window.** The ten-year
+requirement, not the data, is what empties 2014-2015:
+
+```
+screenable      2012  2013  2014  2015  2016
+years=10           0     0     0     6    59
+years=7            4    17   144   287   332
+years=5          120   259   353   380   367
+```
+
+Seven years is still a durability window, and the change is uniform across every
+date rather than fitted to any name — but it moves the violation budget, so the
+level was re-checked against item 6's calibration before being used:
+
+| years | tolerance | 2019-12-31 | 2024-12-31 |
+|---|---|---|---|
+| 10 | 2 | 7 / 351 = 2.0% | 9 / 450 = 2.0% |
+| 7 | 1 | 7 / 387 = 1.8% | 10 / 483 = 2.1% |
+| 7 | 2 | 12 / 387 = 3.1% | 18 / 483 = 3.7% |
+
+`years=7, tolerance=1` reproduces the 2.0% item 6 settled on and stays stable
+across two windows sharing half their years; `tolerance=2` at seven years is a
+silent loosening (a 2/7 budget against 2/10) and is carried below only as a
+sensitivity check.
+
+**The gate, re-run on 2014-2026.** 48 rebalance dates, 338 screened and 7.2
+passed per date. SPY: +11.59% CAGR, 34.1% max drawdown.
+
+| MoS trigger | CAGR | vs SPY | max DD | trades | hit rate |
+|---|---|---|---|---|---|
+| 0% | +14.04% | +2.45% | 30.9% | 26 | 77% |
+| 10% | +10.78% | -0.81% | 46.7% | 27 | 81% |
+| 20% | +11.02% | -0.57% | 43.8% | 22 | 77% |
+| 30% (configured) | +14.26% | **+2.67%** | 35.2% | 22 | 77% |
+| 40% | +13.08% | +1.49% | 29.5% | 15 | 73% |
+
+Sensitivity at `tolerance=2` (13.1 passed per date): +1.63% at 0%, +2.66% at 30%,
++3.11% at 40%, with drawdowns of 40.1 / 42.1 / 30.9%.
+
+Against item 7's verdict, at the configured trigger: -8.81% vs SPY becomes
+**+2.67%**, 47.6% drawdown against a 33.7% index becomes 35.2% against 34.1%, and
+9 closed trades become 22.
+
+**What this does not establish.**
+
+- The grid is still not monotonic — 14.04, 10.78, 11.02, 14.26, 13.08 across
+  adjacent trigger levels that hold nearly the same names. Worse, changing only
+  the tolerance moves the 0% drawdown from 30.9% to 40.1%. A 2.5-point edge sits
+  inside the noise the grid is itself displaying.
+- **Survivorship is now the largest known bias and remains unquantified.** The
+  universe is EDGAR's `company_tickers.json` order, which is size *at the time
+  SEC generated the file* — that is, 2026. The run's own check (0 of 27 valued
+  names missing prices) measures the wrong thing: it catches a name that was
+  ingested and lost its prices, not a name that was never a candidate because it
+  is no longer large today. Extending the window to 2014 makes this worse, not
+  better.
+- Degrees of freedom were spent to get here: three windows and two tolerance
+  settings, with `years=7` chosen after `years=10` failed. The choice has a
+  data-availability reason and was calibration-checked before use, but it was
+  still made with knowledge of the earlier result.
+
+**Revised recommendation.** Item 7's "do not proceed" is withdrawn — it rested on
+a drawdown produced by a single position in a crippled universe. It is not
+replaced by "proceed": a 2.5-point edge with a non-monotonic grid is not yet a
+result. Quantify survivorship first, since it is the one remaining bias whose
+direction is known and whose size is not, and it flatters every number above.
+Only then is spending LLM tokens defensible.
+
+---
+
+### 9. Survivorship measured: the edge in item 8 was the universe, not the screen
+
+Item 8 left one bias named but unmeasured, and it is the one that flatters every
+number. This is that measurement.
+
+**What the run's own check does not catch.** The report's survivorship line
+counts names that were ingested and then lost their price series — 0 of 27, which
+reads as reassurance. It cannot count a name that was never a candidate. The
+universe comes from EDGAR's `company_tickers.json` in file order, which is size
+*at the time SEC generated the file*: 2026. Every company that mattered in 2014
+and has since been acquired, taken private, or shrunk out of the large-cap range
+is absent from the screen's input, not from its output.
+
+**Magnitude.** Point-in-time S&P 500 membership from a third-party dataset
+(`fja05680/sp500`, 692 weekly snapshots spanning 2014-01-07 to 2025-12-22),
+against the 911 tickers then in the store:
+
+```
+distinct S&P 500 members, 2014-2026     767
+  present in the store                  478   (62%)
+  never a candidate                     289   (38%)
+      had left the index by 2026        242
+      still in the index, outside the
+      911-name slice                     47
+```
+
+**Two mechanisms, not one.** The obvious one is exit: acquisition (ATVI, ALXN,
+ABMD, BCR, CAM), going private (WBA), demotion (PARA, JNPR, HES, K, CPB).
+The second is quieter — **ticker identity drifts under a live company**. BK still
+files and still trades; Bank of New York Mellon rebranded to `BNY` in 2025, so a
+universe keyed on today's ticker string loses its entire history under the old
+one. Recorded while checking this, and worth a separate look: `AEP` is absent
+from both `company_tickers.json` and `company_tickers_exchange.json` as fetched
+2026-08-17, though the company is an index member that files 10-Ks. The universe
+source has holes in the present, not only in the past.
+
+**How much is reachable.** Of the 289 missing, 119 still resolve to a CIK through
+EDGAR's ticker file and 170 do not. The 170 are precisely the acquired and
+delisted — the adversely selected half. Reaching them needs a historical
+ticker-to-CIK map, which the ingest path does not have. So what follows is a
+**lower bound on the bias, measured on its milder half.**
+
+The 119 were ingested (49 fell below the 80% coverage floor); the store went from
+911 to 1,020 tickers and is kept at 1,020. Backup at
+`value.db.bak-presurvivorship`.
+
+**The gate, re-run on the widened universe.** 2014-2026, `years=7`,
+`tolerance=1`, 48 dates, 388 screened and 7.6 passed per date. SPY +11.59%,
+34.1% max drawdown.
+
+| MoS trigger | CAGR | vs SPY | max DD | trades | | item 8 CAGR | item 8 DD |
+|---|---|---|---|---|---|---|---|
+| 0% | +13.00% | +1.41% | 31.6% | 28 | | +14.04% | 30.9% |
+| 10% | +9.81% | -1.77% | 53.5% | 29 | | +10.78% | 46.7% |
+| 20% | +9.31% | -2.28% | 54.1% | 24 | | +11.02% | 43.8% |
+| 30% (configured) | +12.36% | **+0.77%** | **47.8%** | 24 | | +14.26% | 35.2% |
+| 40% | +10.65% | -0.94% | 34.6% | 17 | | +13.08% | 29.5% |
+
+Every level degraded; none improved. At the configured trigger the edge falls
+from +2.67% to +0.77% and the drawdown rises 12.6 points, back above the index.
+Three of five levels now trail SPY outright. The one-sidedness is the tell — a
+correction that only ever subtracts is a bias being removed, not noise being
+added.
+
+**Verdict.** Repairing 38% of the hole cost 1.9 points of CAGR at the configured
+trigger. The unrepaired 62% is the worse-selected half. A +0.77% edge sitting
+inside a grid that swings 13.00 / 9.81 / 9.31 / 12.36 / 10.65 across adjacent
+trigger levels, with drawdowns from 31.6% to 54.1%, is not a measurement of
+anything.
+
+So the phase-4 gate is not passed. Three verdicts have now been wrong in
+sequence, and it is worth being precise about why, because the pattern is the
+finding:
+
+1. *Item 7 — fails, does not protect capital.* Wrong: a single Biogen position
+   held at 100% of NAV in a universe crippled to 53-84 names by the XBRL ceiling.
+2. *Item 8 — passes, +2.67% over SPY.* Wrong: a universe selected on 2026 size.
+3. *Item 9 — no measurable edge.* Rests on a lower-bound correction, an
+   underpowered test, and 170 adversely-selected names still outside it.
+
+Each verdict was overturned by a defect in the *test*, not by new evidence about
+the strategy — and each defect flattered or damned it by more than the effect
+being measured. That is the honest summary of phase 4: this apparatus cannot
+resolve an edge of the size being looked for. The remaining ways to change that
+are a point-in-time fundamentals vendor covering pre-2009 and delisted issuers
+(breaking the EDGAR-only design and costing money), or accepting that the tier-1
+numeric screen has been given a fair test and did not clear it.
+
+Nothing here argues for spending LLM tokens on the higher tiers.

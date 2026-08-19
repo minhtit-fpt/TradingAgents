@@ -68,6 +68,28 @@ class ScreenResult:
     years_required: int
 
     @property
+    def quality(self) -> float:
+        """Share of (blocking criterion, year) checks that came out clean.
+
+        1.0 is a decade clean on every criterion. This is the module's own thesis
+        expressed as a number — "sustained" is what narrows three thousand filers
+        to a double-digit list, so *how* sustained is the natural ranking key, and
+        phase 4b step 4 ranks on it instead of gating on margin of safety.
+
+        A year that could not be evaluated counts against the score exactly as a
+        violation does, for the reason stated at the top of this module: a company
+        with two years of data must not score a perfect ten.
+        """
+        checks = [c for c in self.criteria if c.blocking]
+        slots = len(checks) * self.years_required
+        if not slots:
+            return 0.0
+        bad = sum(len(c.bad_years) for c in checks)
+        # Years short of the requirement are unevaluated years, not clean ones.
+        bad += len(checks) * max(self.years_required - len(self.years), 0)
+        return max(1.0 - bad / slots, 0.0)
+
+    @property
     def failed_criteria(self) -> tuple[str, ...]:
         """Blocking criteria that failed — the reason line for the screen log."""
         failures = tuple(c.name for c in self.criteria if c.blocking and not c.passed)

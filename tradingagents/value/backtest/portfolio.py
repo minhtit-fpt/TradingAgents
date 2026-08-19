@@ -45,6 +45,10 @@ class Result:
     winners: int
     average_bars_held: float
     rejected: int = 0
+    # Portfolio value at the close of every bar. The grid's headline numbers are
+    # single points; step 3 puts intervals around them, and that needs the path,
+    # not the endpoints.
+    curve: tuple[tuple[str, float], ...] = ()
 
     @property
     def cagr(self) -> float | None:
@@ -66,14 +70,23 @@ class Result:
 
 
 class Rebalance(bt.Strategy):
-    """Hold the scheduled names, equally weighted, until the next rebalance."""
+    """Hold the scheduled names, equally weighted, until the next rebalance.
 
-    params = (("schedule", ()),)
+    ``cap`` bounds any single position as a share of NAV (phase 4b step 5).
+    Below it the book is equal-weighted as before; above it the excess stays in
+    cash rather than being spread over the remaining names, because spreading it
+    would push *those* through the cap in turn. A date on which two names qualify
+    therefore holds 2 x 15% and 70% cash — which is the point: item 7's drawdown
+    was one position at 100% of NAV.
+    """
+
+    params = (("schedule", ()), ("cap", 1.0))
 
     def __init__(self) -> None:
         self._pending = list(self.p.schedule)
         self._feeds = {data._name: data for data in self.datas if data._name != CLOCK_FEED}
         self.rejected = 0
+        self.curve: list[tuple[str, float]] = []
 
     def notify_order(self, order) -> None:
         """Count orders the broker refused.
@@ -87,6 +100,7 @@ class Rebalance(bt.Strategy):
 
     def next(self) -> None:
         today = self.datas[0].datetime.date(0)
+        self.curve.append((today.isoformat(), self.broker.getvalue()))
         target = self._due(today)
         if target is None:
             return
@@ -98,7 +112,7 @@ class Rebalance(bt.Strategy):
         tradable = [name for name in target if len(self._feeds.get(name, ()))]
         if not tradable:
             return
-        weight = (1.0 - CASH_BUFFER) / len(tradable)
+        weight = min(self.p.cap, (1.0 - CASH_BUFFER) / len(tradable))
 
         # Sells before buys, always. Orders fill at the next open in submission
         # order, and a buy is sized off portfolio *value* while the broker funds
@@ -137,6 +151,7 @@ def simulate(
     end: str,
     start_cash: float,
     commission: float,
+    position_cap: float = 1.0,
 ) -> Result:
     """Run one schedule through backtrader and return its statistics."""
     cerebro = bt.Cerebro(stdstats=False)
@@ -158,7 +173,7 @@ def simulate(
             continue
         cerebro.adddata(window, name=ticker)
 
-    cerebro.addstrategy(Rebalance, schedule=tuple(schedule))
+    cerebro.addstrategy(Rebalance, schedule=tuple(schedule), cap=position_cap)
     cerebro.addanalyzer(bt.analyzers.DrawDown, _name="drawdown")
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
 
@@ -178,6 +193,7 @@ def simulate(
         winners=int(trades.get("won", {}).get("total", 0) or 0),
         average_bars_held=float(trades.get("len", {}).get("average", 0.0) or 0.0),
         rejected=strategy.rejected,
+        curve=tuple(strategy.curve),
     )
 
 

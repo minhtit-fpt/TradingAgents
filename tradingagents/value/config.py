@@ -153,6 +153,40 @@ BACKTEST_START_CASH = _env_float("VALUE_BACKTEST_CASH", 100_000.0)
 BACKTEST_COMMISSION = _env_float("VALUE_BACKTEST_COMMISSION", 0.001)
 BACKTEST_BENCHMARK = os.environ.get("VALUE_BACKTEST_BENCHMARK", "SPY")
 
+# How many names the rank-based selection holds (phase 4b step 4). The margin of
+# safety stops being a gate there and becomes a tie-break, so something has to
+# bound the position count; 10 at an equal weight is 10% a name, which is inside
+# the cap step 5 will impose.
+BACKTEST_TOP_N = _env_int("VALUE_BACKTEST_TOP_N", 10)
+
+# Portfolio construction (phase 4b step 5). Item 7's 47.6% drawdown was one
+# Biogen position at 100% of NAV — the strategy never chose that, the absence of
+# a cap did. These three bound the book rather than the screen:
+#
+#   cap  — no name may take more than this share of NAV, so a date on which one
+#          name qualifies buys one 15% position and holds cash, not a 98% bet.
+#   min  — the strategy does not *start* a book thinner than this. It does not
+#          force a liquidation once invested: ejecting names that still pass the
+#          criteria is exactly the selling step 5 exists to stop.
+#   max  — an upper bound on the book. Incumbents keep their slots, so this
+#          turns away new ideas rather than selling held ones.
+BACKTEST_POSITION_CAP = _env_float("VALUE_BACKTEST_POSITION_CAP", 0.15)
+BACKTEST_MIN_POSITIONS = _env_int("VALUE_BACKTEST_MIN_POSITIONS", 5)
+BACKTEST_MAX_POSITIONS = _env_int("VALUE_BACKTEST_MAX_POSITIONS", 15)
+
+# Point-in-time index membership, so a rebalance date screens the universe as it
+# stood then rather than as it stands today (phase 4b step 1). Items 8 and 9 of
+# the phase-4 findings were both overturned by the absence of this.
+MEMBERSHIP_PATH = _env_path("VALUE_MEMBERSHIP_PATH", VALUE_HOME / "sp500_history.csv")
+# Snapshots are change-driven, not periodic, so a date legitimately falls after
+# the newest one. Forward-filling one quarter matches the rebalance cadence;
+# beyond that the file is stale and the run must say so rather than screen a
+# universe that has since changed.
+MEMBERSHIP_MAX_STALE_DAYS = _env_int("VALUE_MEMBERSHIP_MAX_STALE_DAYS", 100)
+# Merged ticker -> CIK map from SEC's two ticker files, cached because it changes
+# on their schedule rather than ours (phase 4b step 2).
+TICKER_MAP_PATH = _env_path("VALUE_TICKER_MAP_PATH", VALUE_HOME / "ticker_cik.json")
+
 # Hard USD ceilings. The per-run cap bounds a runaway loop inside one job; the
 # per-month cap bounds the whole deployment. Both fail closed (see budget.py).
 RUN_BUDGET_USD = _env_float("VALUE_RUN_BUDGET_USD", 2.0)
