@@ -17,6 +17,19 @@ def _env_path(name: str, default: Path) -> Path:
     return Path(raw).expanduser() if raw else default
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid value for {name}: expected an integer, got {raw!r}") from exc
+    if value <= 0:
+        raise ValueError(f"Invalid value for {name}: must be positive, got {value}")
+    return value
+
+
 def _env_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     if raw is None or raw == "":
@@ -34,6 +47,26 @@ VALUE_HOME = _env_path("VALUE_HOME", Path.home() / ".tradingagents" / "value")
 
 LLM_CACHE_DIR = _env_path("VALUE_LLM_CACHE_DIR", VALUE_HOME / "llm_cache")
 BUDGET_LEDGER_PATH = _env_path("VALUE_BUDGET_LEDGER", VALUE_HOME / "llm_budget.jsonl")
+DB_PATH = _env_path("VALUE_DB_PATH", VALUE_HOME / "value.db")
+
+# SEC requires a descriptive User-Agent carrying a real contact address. There is
+# no default: an anonymous or fake agent gets the server's IP blocked, and EDGAR
+# is the only source of statements this module has.
+SEC_USER_AGENT = os.environ.get("VALUE_SEC_USER_AGENT", "")
+
+# SEC's published ceiling is 10 requests/second. Sit under it — the cost of being
+# slightly slow is nothing next to the cost of being banned.
+EDGAR_REQUESTS_PER_SECOND = _env_float("VALUE_EDGAR_RPS", 8.0)
+EDGAR_MAX_RETRIES = _env_int("VALUE_EDGAR_MAX_RETRIES", 5)
+EDGAR_TIMEOUT_SECONDS = _env_float("VALUE_EDGAR_TIMEOUT", 30.0)
+
+# How many fiscal years of history the screen reasons over.
+HISTORY_YEARS = _env_int("VALUE_HISTORY_YEARS", 10)
+
+# Fraction of concepts that must resolve for a ticker to be screenable. Below
+# this it is excluded rather than screened on partial data (plan section 9.6):
+# a ratio computed from missing inputs is a confidently wrong number.
+MIN_CONCEPT_COVERAGE = _env_float("VALUE_MIN_COVERAGE", 0.8)
 
 # Hard USD ceilings. The per-run cap bounds a runaway loop inside one job; the
 # per-month cap bounds the whole deployment. Both fail closed (see budget.py).
