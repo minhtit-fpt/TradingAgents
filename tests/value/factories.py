@@ -1,4 +1,4 @@
-"""Synthetic financials for the screening tests.
+"""Synthetic financials and prices for the screening and backtest tests.
 
 One deliberately excellent company — every criterion cleared with room to spare —
 so that a test which mutates a single number is testing exactly that number.
@@ -56,6 +56,37 @@ def decade(
             for concept, value in BASE_YEAR.items()
         }
     return series
+
+
+def price_frame(
+    start: str = "2005-01-01",
+    end: str = "2026-06-30",
+    price: float = 100.0,
+    drift: float = 0.0,
+    splits=None,
+):
+    """What ``market._history`` returns: a yfinance OHLCV frame plus ``AS_TRADED``.
+
+    Built through ``with_as_traded`` rather than by hand, so a test never sees a
+    frame shaped differently from the one the fetcher actually produces.
+    """
+    import pandas as pd
+
+    from tradingagents.value.screen.market import with_as_traded
+
+    index = pd.bdate_range(start=start, end=end)
+    closes = [price * (1 + drift) ** step for step in range(len(index))]
+    frame = pd.DataFrame(
+        {
+            "Open": closes,
+            "High": [c * 1.01 for c in closes],
+            "Low": [c * 0.99 for c in closes],
+            "Close": closes,
+            "Volume": [1_000_000] * len(index),
+        },
+        index=index,
+    )
+    return with_as_traded(frame, splits)
 
 
 def facts_for(series: dict[int, dict[str, float]]) -> list[Fact]:

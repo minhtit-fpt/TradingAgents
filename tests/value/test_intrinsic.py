@@ -34,12 +34,22 @@ class GrowthFitTest(unittest.TestCase):
             intrinsic.fit_growth(intrinsic.eps_history(decade(years=1)))
 
 
+def no_dividend_decade():
+    """The same flat earner, paying nothing out."""
+    series = flat_eps_decade()
+    for facts in series.values():
+        del facts["DividendsPaid"]
+    return series
+
+
 class ValuationTest(unittest.TestCase):
-    def test_a_flat_earner_is_worth_its_discounted_terminal_multiple(self):
+    def test_a_flat_non_payer_is_worth_its_discounted_terminal_multiple(self):
         # 1.00 EPS, no growth, 15x terminal, discounted 10 years at 10%.
-        valuation = intrinsic.value(flat_eps_decade(), price=10.0, discount_rate=0.10)
+        valuation = intrinsic.value(no_dividend_decade(), price=10.0, discount_rate=0.10)
 
         self.assertAlmostEqual(valuation.growth_rate, 0.0, places=9)
+        self.assertIsNone(valuation.payout_ratio)
+        self.assertEqual(valuation.dividend_value, 0.0)
         self.assertAlmostEqual(valuation.intrinsic_value, 15 / 1.10**10, places=6)
 
     def test_margin_of_safety_is_the_discount_to_that_value(self):
@@ -60,6 +70,71 @@ class ValuationTest(unittest.TestCase):
     def test_a_worthless_price_is_refused_rather_than_valued(self):
         with self.assertRaises(intrinsic.ValuationError):
             intrinsic.value(flat_eps_decade(), price=0.0, discount_rate=0.10)
+
+
+class DividendTest(unittest.TestCase):
+    def test_the_projected_payout_is_worth_its_discounted_stream(self):
+        # 1.00 EPS flat, 30 paid on 100 earned: 0.30 a year for ten years at 10%.
+        valuation = intrinsic.value(flat_eps_decade(), price=10.0, discount_rate=0.10)
+
+        stream = sum(0.30 / 1.10**year for year in range(1, 11))
+        self.assertAlmostEqual(valuation.payout_ratio, 0.30, places=9)
+        self.assertAlmostEqual(valuation.dividend_value, stream, places=9)
+        self.assertAlmostEqual(
+            valuation.intrinsic_value, stream + 15 / 1.10**10, places=9
+        )
+
+    def test_dividends_raise_the_value_of_an_otherwise_identical_business(self):
+        payer = intrinsic.value(flat_eps_decade(), price=10.0, discount_rate=0.10)
+        non_payer = intrinsic.value(no_dividend_decade(), price=10.0, discount_rate=0.10)
+
+        self.assertGreater(payer.intrinsic_value, non_payer.intrinsic_value)
+
+    def test_the_payout_is_the_median_year_not_the_latest(self):
+        # One year of a special dividend is not a decade of policy.
+        series = flat_eps_decade()
+        series[2024]["DividendsPaid"] = 900.0
+
+        self.assertAlmostEqual(
+            intrinsic.value(series, price=10.0, discount_rate=0.10).payout_ratio,
+            0.30,
+            places=9,
+        )
+
+    def test_a_payout_above_earnings_is_capped_at_all_of_them(self):
+        # Paying out more than you earn is a year, not a decade. Projecting it
+        # compounds a number the business cannot fund.
+        series = flat_eps_decade()
+        for facts in series.values():
+            facts["DividendsPaid"] = 150.0
+
+        self.assertAlmostEqual(
+            intrinsic.value(series, price=10.0, discount_rate=0.10).payout_ratio,
+            1.0,
+            places=9,
+        )
+
+    def test_the_payout_survives_a_missing_share_count(self):
+        # Both halves of the ratio are company totals, so it is immune to the
+        # split-basis gaps that drop years out of the EPS history.
+        series = flat_eps_decade()
+        for year in list(series)[:5]:
+            del series[year]["DilutedShares"]
+
+        valuation = intrinsic.value(series, price=10.0, discount_rate=0.10)
+
+        self.assertAlmostEqual(valuation.payout_ratio, 0.30, places=9)
+
+    def test_a_growing_payout_grows_with_earnings(self):
+        # Payout held constant means the dividend compounds at the fitted rate.
+        valuation = intrinsic.value(decade(growth=0.10), price=10.0, discount_rate=0.10)
+
+        eps = valuation.eps[-1][1]
+        stream = sum(
+            eps * 1.10**year * valuation.payout_ratio / 1.10**year
+            for year in range(1, 11)
+        )
+        self.assertAlmostEqual(valuation.dividend_value, stream, places=6)
 
 
 class CapTest(unittest.TestCase):

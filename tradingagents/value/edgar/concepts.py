@@ -54,6 +54,10 @@ class Concept:
     # as a negative cash flow in one filing, positive in the next). For those the
     # magnitude is what the ratios need, so it is normalised on write.
     absolute: bool = False
+    # Smallest value that can be a real figure rather than a filer scale error.
+    # A row below it is dropped, not rescaled: inferring the intended scale is
+    # guessing, and a guessed denominator produces a confidently wrong EPS.
+    minimum: float | None = None
 
 
 @dataclass(frozen=True)
@@ -77,17 +81,29 @@ CONCEPTS: tuple[Concept, ...] = (
         "SalesRevenueNet",
         "SalesRevenueGoodsNet",
     )),
+    # The "excluding depreciation" variants are last: they are the filer's own
+    # presentation, but a cost base without D&A is not on the same footing as one
+    # with it, so a company that reports the inclusive line keeps it.
     Concept("CostOfRevenue", Kind.DURATION, (
         "CostOfRevenue",
         "CostOfGoodsAndServicesSold",
         "CostOfGoodsSold",
+        "CostOfServices",
+        "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
+        "CostOfRevenueExcludingDepreciationDepletionAndAmortization",
+        "CostOfServicesExcludingDepreciationDepletionAndAmortization",
     )),
     Concept("GrossProfit", Kind.DURATION, ("GrossProfit",)),
     Concept("SGA", Kind.DURATION, ("SellingGeneralAndAdministrativeExpense",)),
     # An absent R&D line is legitimate — plenty of excellent businesses do none.
-    Concept("RnD", Kind.DURATION, ("ResearchAndDevelopmentExpense",)),
+    Concept("RnD", Kind.DURATION, (
+        "ResearchAndDevelopmentExpense",
+        "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost",
+        "ResearchAndDevelopmentExpenseSoftwareExcludingAcquiredInProcessCost",
+    )),
     Concept("DepreciationAmortization", Kind.DURATION, (
         "DepreciationDepletionAndAmortization",
+        "DepreciationAndAmortization",
         "DepreciationAmortizationAndAccretionNet",
         "Depreciation",
     )),
@@ -127,10 +143,15 @@ CONCEPTS: tuple[Concept, ...] = (
         "PaymentsToAcquirePropertyPlantAndEquipment",
         "PaymentsToAcquireProductiveAssets",
     ), absolute=True),
+    # A handful of filers tag the share count in millions while declaring the
+    # unit as shares — Bruker files 156.6 for 156,600,000 — and the error is
+    # invisible downstream because it only shows up as an EPS a million times
+    # too large. No SEC registrant in this universe has under a million diluted
+    # shares, so anything below that is the scale error, not a small company.
     Concept("DilutedShares", Kind.DURATION, (
         "WeightedAverageNumberOfDilutedSharesOutstanding",
         "WeightedAverageNumberOfSharesOutstandingBasic",
-    ), unit="shares"),
+    ), unit="shares", minimum=1_000_000.0),
     Concept("DividendsPaid", Kind.DURATION, (
         "PaymentsOfDividendsCommonStock",
         "PaymentsOfDividends",
@@ -149,10 +170,28 @@ _DERIVATIONS: tuple[tuple[str, str, str], ...] = (
     ("Liabilities", "Assets", "Equity"),
 )
 
-# Concepts a company may report split across two tags, summed when the single
-# combined tag is absent for that year.
-_TAG_SUMS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("SGA", ("GeneralAndAdministrativeExpense", "SellingAndMarketingExpense")),
+# The selling half of SG&A, however the filer named it. First one with data for
+# the year wins; they are alternatives, never summed with each other.
+_SELLING_TAGS = (
+    "SellingAndMarketingExpense",
+    "SellingExpense",
+    "MarketingExpense",
+    "MarketingAndAdvertisingExpense",
+)
+
+# Ways to fill a concept the tag chain missed, in order, each stage seeing only
+# the years still uncovered. Every element of a stage is a slot, and every slot
+# is a set of alternative tags — all slots must be filled from the same filing or
+# the stage produces nothing for that year.
+#
+# The order is what keeps the number honest. A filer that splits selling from
+# administrative is summed; only a filer with no selling line anywhere in the
+# year falls through to administrative alone. Reversed, every REIT and bank
+# would still resolve, and every retailer would silently lose its selling costs
+# — an expensive business reading as a disciplined one.
+_TAG_SUMS: tuple[tuple[str, tuple[tuple[str, ...], ...]], ...] = (
+    ("SGA", (("GeneralAndAdministrativeExpense",), _SELLING_TAGS)),
+    ("SGA", (("GeneralAndAdministrativeExpense",),)),
 )
 
 
@@ -183,7 +222,7 @@ def _rows_by_year(tags: dict, concept: Concept) -> dict[int, tuple[str, list[dic
     resolved: dict[int, tuple[str, list[dict]]] = {}
     for tag in concept.tags:
         for row in tags.get(tag, {}).get("units", {}).get(concept.unit, []):
-            if not _is_annual_10k(row, concept.kind):
+            if not _is_annual_10k(row, concept.kind) or _is_scale_error(row, concept):
                 continue
             fiscal_year = fiscal_year_for(date.fromisoformat(row["end"]))
             if fiscal_year not in resolved:
@@ -233,6 +272,11 @@ def _is_annual_10k(row: dict, kind: Kind) -> bool:
     return _MIN_ANNUAL_DAYS <= span <= _MAX_ANNUAL_DAYS
 
 
+def _is_scale_error(row: dict, concept: Concept) -> bool:
+    """True when the value is too small to be the figure the tag claims to be."""
+    return concept.minimum is not None and abs(float(row["val"])) < concept.minimum
+
+
 def _to_fact(concept: Concept, tag: str, row: dict, source_tag: str | None = None) -> Fact:
     value = float(row["val"])
     return Fact(
@@ -248,27 +292,34 @@ def _to_fact(concept: Concept, tag: str, row: dict, source_tag: str | None = Non
 
 
 def _summed_facts(tags: dict, existing: list[Fact]) -> list[Fact]:
-    """Fill a concept from the sum of two component tags, where it is missing."""
+    """Fill a concept from its component tags, for the years still missing it."""
     summed: list[Fact] = []
-    for name, components in _TAG_SUMS:
+    for name, slots in _TAG_SUMS:
         concept = CONCEPTS_BY_NAME[name]
         covered = {fact.fiscal_year for fact in existing if fact.concept == name}
-        parts: dict[tuple[int, str], list[dict]] = {}
-        for tag in components:
-            for row in tags.get(tag, {}).get("units", {}).get(concept.unit, []):
-                if not _is_annual_10k(row, concept.kind):
-                    continue
-                fiscal_year = fiscal_year_for(date.fromisoformat(row["end"]))
-                if fiscal_year in covered:
-                    continue
-                parts.setdefault((fiscal_year, row.get("accn", "")), []).append(row)
+        covered |= {fact.fiscal_year for fact in summed if fact.concept == name}
 
-        for rows in parts.values():
-            if len(rows) != len(components):
+        # {(fiscal year, filing): {slot index: (tag, row)}}
+        parts: dict[tuple[int, str], dict[int, tuple[str, dict]]] = {}
+        for index, alternatives in enumerate(slots):
+            for tag in alternatives:
+                for row in tags.get(tag, {}).get("units", {}).get(concept.unit, []):
+                    if not _is_annual_10k(row, concept.kind):
+                        continue
+                    fiscal_year = fiscal_year_for(date.fromisoformat(row["end"]))
+                    if fiscal_year in covered:
+                        continue
+                    filled = parts.setdefault((fiscal_year, row.get("accn", "")), {})
+                    filled.setdefault(index, (tag, row))  # earlier alternative wins
+
+        for filled in parts.values():
+            if len(filled) != len(slots):
                 continue  # a partial sum is a wrong number, not a smaller one
-            total = dict(rows[0])
-            total["val"] = sum(float(row["val"]) for row in rows)
-            summed.append(_to_fact(concept, "", total, source_tag="+".join(components)))
+            found = [filled[index] for index in range(len(slots))]
+            total = dict(found[0][1])
+            total["val"] = sum(float(row["val"]) for _, row in found)
+            source = "+".join(tag for tag, _ in found)
+            summed.append(_to_fact(concept, "", total, source_tag=source))
     return summed
 
 
