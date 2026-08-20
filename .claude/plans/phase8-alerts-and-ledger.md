@@ -374,10 +374,39 @@ that nobody would have questioned.
 
 Which is also the uncomfortable part. Two data defects in this module — the
 extraction bug and the dropped `--years` flag — were both caught by a person
-happening to read one line, not by anything that checks. The flag case now has
-`setting_label` printing the population settings on every run and in `--dry-run`.
-The extraction case has nothing equivalent: the analyst noticing "this reads as
-Item 1" in `evidence_gaps` is the whole detection mechanism, and it only worked
-because the field had just been promoted. A cheap standing check on what
-`sections_for` returns — that a span opens at a heading and is within an order of
-magnitude of its neighbours — is not built and should be.
+happening to read one line, not by anything that checks. Both now have a
+mechanical check, and neither check is complete.
+
+`setting_label` prints `--years` and `--tolerance` in the report header and the
+`--dry-run` count, so two runs over different universes can no longer print
+headers that read alike.
+
+`filings._geometry_faults` checks the extracted spans against how a 10-K is laid
+out. Four rules, each aimed at a shape the previous ones cannot see:
+
+| rule | catches |
+|---|---|
+| Items 1, 1A, 7 appear in that order and do not contain one another | one section holding another's text |
+| no found section is 20x smaller than the largest | a fragment returned as a body |
+| MD&A ends within 0.5x its own length of Item 8's body | a span closed early by a cited later item |
+| MD&A starts within 0.7x its own length of where Item 1A ends | a span opened late inside a citation |
+
+It runs on every extraction, costs nothing, and rides out on `Sections.suspect`
+into both the analyst's prompt (only when non-empty — the prompt is the cache key,
+and an unconditional line would invalidate every assessment already paid for) and
+the operator-facing note, so it reaches the alert and the heartbeat rather than
+only the model that was fed the bad text.
+
+**Measured against the six filings the defect was found on, with `_is_citation`
+reverted to re-create it: 6 of 6 flagged. With the fix in place: 0 of 6.** Each
+rule is load-bearing — ordering catches KO, DECK and ADBE; coverage catches RMD
+and MSFT, whose MD&A closed early at a cited "Item 8" and was otherwise in order
+and not 20x short; the lead-in rule catches PG, whose span opened 50,039
+characters late, reached Item 8 correctly, and was the right length.
+
+Both thresholds come from the same six filings, which is the honest limit of
+this. Coverage separates 0.04-0.18 (correct) from 0.89-91.55 (broken) and 0.5
+sits in an empty middle. The lead-in ratio separates 0.16-0.39 from 1.02-5.17 and
+0.7 is thinner: a filer with an unusually long Item 2 could trip it. That
+asymmetry is deliberate — a false positive is a briefing that arrives carrying a
+caveat, and a false negative is what cost 44 paid calls.
