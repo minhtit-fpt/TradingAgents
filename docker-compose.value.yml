@@ -1,0 +1,19 @@
+# Subsystem 3 (value module) only. Separate from docker-compose.yml so the
+# isolation contract holds at the deployment layer too: this file names no
+# service from subsystems 1 or 2, and they name none from here.
+#
+# One-shot by design — the host scheduler decides *when*, this decides *what*.
+#
+#   docker compose -f docker-compose.value.yml run --rm value-daily
+#   docker compose -f docker-compose.value.yml run --rm value-daily --dry-run
+services:
+  value-daily:
+    build: .
+    image: tradingagents-value:latest
+    env_file:
+      - .env
+    entrypoint: ["python", "-m", "tradingagents.value.jobs.daily"]
+    # Bind mount, not a named volume: the store is seeded by copying value.db in
+    # and is the thing worth backing up, so it stays visible from the host.
+    volumes:
+      - ./value-state:/home/appuser/.tradingagents/value
