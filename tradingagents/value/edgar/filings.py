@@ -76,6 +76,38 @@ def _is_citation(text: str, start: int, end: int) -> bool:
 # a body. Item 1A alone runs to tens of thousands of characters in any real 10-K.
 _MIN_SECTION_CHARS = 1_000
 
+# A found section this many times smaller than the largest found section is a
+# fragment wearing a body's clothes. KO's broken MD&A ran 3,199 characters while
+# its risk_factors span held 96k of MD&A text — a 30x spread. Real 10-Ks spread
+# maybe 3-4x between Items 1, 1A and 7, so 20 leaves room for an odd filer and
+# still catches the failure this exists for.
+_SIZE_OUTLIER_RATIO = 20
+
+# MD&A runs until Item 7A or Item 8, and Item 7A is short, so the unclaimed text
+# between the end of the extracted MD&A and the start of Item 8's body should be
+# a small fraction of the MD&A itself. Measured over the six filings the original
+# defect was found on: with extraction correct the ratio is 0.04-0.18; with the
+# defect re-created it is 0.89, 2.82, 2.98 and 91.55 for the four that close
+# early. 0.5 sits in the empty middle with margin on both sides.
+_COVERAGE_GAP_RATIO = 0.5
+
+# Item 8 is not extracted — it is the financial statements, which tier 3 does not
+# read — but its body is where MD&A must stop, so it is located for that purpose
+# alone. The other two sections have no equally clean terminator: Item 1A ends at
+# 1B or 1C or 2 depending on the filer and the year, so no coverage rule is
+# applied to them rather than one guessed at.
+_MDNA_TERMINATOR = "8"
+
+# The mirror of the coverage rule, for a span that opens late instead of closing
+# early. Items 1B through 6 sit between Risk Factors and MD&A and are short, so
+# the run-up to MD&A is a fraction of MD&A itself. Same six filings: 0.16-0.39
+# when extraction is correct, 1.02-5.17 for the four broken ones that open late.
+# 0.7 sits between, though on six filings that margin is thinner than the
+# coverage rule's — a filer with an unusually long Item 2 could trip it. The cost
+# of being wrong here is a briefing that arrives carrying a caveat, never one
+# that does not arrive.
+_LEAD_IN_RATIO = 0.7
+
 # Crude, and deliberately so: no tokenizer dependency for a truncation whose only
 # job is to keep the request inside a context window with room to spare. English
 # prose runs ~4 characters per token; being wrong by 20% here costs nothing.
@@ -98,6 +130,10 @@ class Sections:
     risk_factors: str
     mdna: str
     dropped: tuple[tuple[str, int], ...] = ()
+    # Structural complaints about the spans these bodies came from. Empty is the
+    # expected case; anything here means the extraction is probably wrong even
+    # though it returned text. See ``_geometry_faults``.
+    suspect: tuple[str, ...] = ()
 
     @property
     def missing(self) -> tuple[str, ...]:
@@ -139,16 +175,32 @@ def extract(text: str, token_budget: int = SECTION_TOKEN_BUDGET) -> Sections:
                if not _is_citation(text, match.start(), match.end())]
 
     bodies: dict[str, str] = {}
+    bounds: dict[str, tuple[int, int]] = {}
+    sizes: dict[str, int] = {}
     dropped: list[tuple[str, int]] = []
     limit = token_budget * _CHARS_PER_TOKEN
     for item, field in _TARGETS:
-        body = _longest_span(text, markers, item)
+        span = _longest_span(text, markers, item)
+        if span is None:
+            bodies[field] = ""
+            continue
+        bounds[field] = span
+        body = text[span[0]:span[1]].strip(" .:—-")
+        # Measured before truncation: the budget shortens every long section
+        # equally, so comparing post-truncation lengths would hide the outlier.
+        sizes[field] = len(body)
         if len(body) > limit:
             dropped.append((field, len(body) - limit))
             body = body[:limit]
         bodies[field] = body
 
-    return Sections(dropped=tuple(dropped), **bodies)
+    return Sections(
+        dropped=tuple(dropped),
+        suspect=_geometry_faults(
+            bounds, sizes, _longest_span(text, markers, _MDNA_TERMINATOR)
+        ),
+        **bodies,
+    )
 
 
 def fetch_10k(client: SecClient, cik: int, as_of: str | None = None) -> Filing:
@@ -202,11 +254,17 @@ def sections_for(
     return filing, extract(to_text(filing.html), token_budget)
 
 
-def _longest_span(text: str, markers: list[tuple[int, int, str]], item: str) -> str:
-    """Body of ``item``: the longest run from one of its markers to the next item.
+def _longest_span(
+    text: str, markers: list[tuple[int, int, str]], item: str
+) -> tuple[int, int] | None:
+    """Bounds of ``item``'s body: the longest run from one of its markers to the next.
 
     Longest, because the table of contents opens the same item a few characters
     before the next one and the body opens it pages before.
+
+    Bounds rather than the text itself, because where a span sits is what
+    ``_geometry_faults`` checks — two sections cannot both be correct and also
+    overlap, and that is not visible once the slices are separate strings.
     """
     spans = []
     for index, (_, end, label) in enumerate(markers):
@@ -217,12 +275,80 @@ def _longest_span(text: str, markers: list[tuple[int, int, str]], item: str) -> 
             if other != item:
                 stop = start
                 break
-        spans.append(text[end:stop].strip(" .:—-"))
+        spans.append((end, max(end, stop)))
 
     if not spans:
-        return ""
-    body = max(spans, key=len)
-    return body if len(body) >= _MIN_SECTION_CHARS else ""
+        return None
+    start, stop = max(spans, key=lambda bound: bound[1] - bound[0])
+    return (start, stop) if stop - start >= _MIN_SECTION_CHARS else None
+
+
+def _geometry_faults(
+    bounds: dict[str, tuple[int, int]],
+    sizes: dict[str, int],
+    terminator: tuple[int, int] | None = None,
+) -> tuple[str, ...]:
+    """Ways the extracted spans contradict how a 10-K is laid out.
+
+    Items 1, 1A and 7 appear once each, in that order, and do not contain one
+    another. A run that violates that returned text for every section and was
+    still wrong — which is exactly the failure mode nobody could see: five of six
+    filings extracted the wrong MD&A and every one of them looked plausible.
+
+    Complaints, not exceptions. A filer odd enough to trip this should reach the
+    operator as a flagged briefing, not as a missing one.
+    """
+    faults: list[str] = []
+    ordered = sorted(bounds.items(), key=lambda kv: kv[1][0])
+
+    expected = [field for _item, field in _TARGETS if field in bounds]
+    actual = [field for field, _bound in ordered]
+    if actual != expected:
+        faults.append(
+            "sections are out of filing order: found " + " -> ".join(actual)
+            + ", expected " + " -> ".join(expected)
+        )
+
+    for (left, (_, left_stop)), (right, (right_start, _)) in zip(ordered, ordered[1:], strict=False):
+        if right_start < left_stop:
+            faults.append(
+                f"{left} and {right} overlap by {left_stop - right_start:,} characters — "
+                f"one of them is holding the other's text"
+            )
+
+    if len(sizes) > 1:
+        largest = max(sizes.values())
+        for field, size in sizes.items():
+            if size * _SIZE_OUTLIER_RATIO < largest:
+                faults.append(
+                    f"{field} is {size:,} characters against {largest:,} for the largest "
+                    "section — too small to be a body"
+                )
+
+    # Coverage: does MD&A actually reach the financial statements? A section
+    # closed early by a citation to a later item returns real text from the right
+    # place and is the one shape ordering and size both miss.
+    mdna = bounds.get("mdna")
+    if mdna is not None and terminator is not None and sizes.get("mdna"):
+        gap = terminator[0] - mdna[1]
+        if gap > sizes["mdna"] * _COVERAGE_GAP_RATIO:
+            faults.append(
+                f"mdna stops {gap:,} characters short of Item 8, against a body of "
+                f"{sizes['mdna']:,} — it is closing early"
+            )
+
+    # And the same question at the other end: a span that opens inside a citation
+    # reaches Item 8 correctly and is the right length to pass the size rule, so
+    # only the run-up gives it away.
+    risk = bounds.get("risk_factors")
+    if mdna is not None and risk is not None and sizes.get("mdna"):
+        lead = mdna[0] - risk[1]
+        if lead > sizes["mdna"] * _LEAD_IN_RATIO:
+            faults.append(
+                f"mdna starts {lead:,} characters after Item 1A ends, against a body of "
+                f"{sizes['mdna']:,} — it is opening late"
+            )
+    return tuple(faults)
 
 
 def _collapse(text: str) -> str:

@@ -66,6 +66,12 @@ def build_prompt(
         or "none"
     )
     missing = ", ".join(sections.missing) or "none"
+    # Appended only when there is something to say. This prompt is the cache key,
+    # so an unconditional line would invalidate every assessment already paid for.
+    suspect = (
+        "\nExtraction may be wrong — " + "; ".join(sections.suspect)
+        if sections.suspect else ""
+    )
 
     return "\n".join(
         (
@@ -75,7 +81,8 @@ def build_prompt(
             "",
             f"## Numeric screen result\n{numeric_summary}",
             "",
-            f"## Extraction notes\nTruncated: {dropped}\nSections not found: {missing}",
+            f"## Extraction notes\nTruncated: {dropped}\n"
+            f"Sections not found: {missing}{suspect}",
             "",
             f"## Item 1 — Business\n{sections.business or '(not found in the filing)'}",
             "",

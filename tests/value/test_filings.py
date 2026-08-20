@@ -207,3 +207,92 @@ class FetchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeometryFaultTest(unittest.TestCase):
+    """Five of six filings extracted the wrong MD&A and every one came back
+    non-empty and plausible. `missing` cannot see that; span geometry can."""
+
+    @staticmethod
+    def _filing(business: int, risk: int, mdna: int) -> str:
+        return (
+            "Item 1. Business " + "b" * business
+            + " Item 1A. Risk Factors " + "r" * risk
+            + " Item 7. Management's Discussion " + "m" * mdna
+            + " Item 8. Financial Statements " + "f" * 2_000
+        )
+
+    def test_a_well_formed_filing_raises_no_complaint(self):
+        sections = filings.extract(self._filing(40_000, 60_000, 50_000))
+
+        self.assertEqual((), sections.suspect)
+        self.assertEqual((), sections.missing)
+
+    def test_a_section_dwarfed_by_its_siblings_is_flagged(self):
+        # KO's shape: MD&A came back at 3,199 characters while risk_factors held
+        # 96k of MD&A text. Every section non-empty, the wrong text in two of them.
+        sections = filings.extract(self._filing(40_000, 96_000, 3_199))
+
+        self.assertTrue(sections.suspect)
+        self.assertIn("mdna", " ".join(sections.suspect))
+        self.assertTrue(sections.mdna, "the text is still returned, only flagged")
+
+    def test_sections_out_of_filing_order_are_flagged(self):
+        text = (
+            "Item 7. Management's Discussion " + "m" * 50_000
+            + " Item 1. Business " + "b" * 40_000
+            + " Item 1A. Risk Factors " + "r" * 60_000
+            + " Item 8. Financial Statements " + "f" * 2_000
+        )
+
+        self.assertIn("out of filing order", " ".join(filings.extract(text).suspect))
+
+    def test_an_mdna_that_closes_early_is_flagged(self):
+        # RMD and MSFT's shape: a citation to "Item 8" inside the MD&A closed the
+        # span at 14,655 characters. Right place, right start, real text, wrong
+        # end — invisible to both the ordering rule and the size rule.
+        text = (
+            "Item 1. Business " + "b" * 40_000
+            + " Item 1A. Risk Factors " + "r" * 40_000
+            + " Item 7. Management's Discussion " + "m" * 14_000
+            # an Item 8 marker ahead of the real one closes Item 7 here, and the
+            # rest of the real MD&A is stranded behind it
+            + " Item 8. Financial Statements " + "x" * 40_000
+            + " Item 7A. Quantitative Disclosures " + "q" * 5_000
+            + " Item 8. Financial Statements " + "f" * 60_000
+        )
+
+        self.assertIn("closing early", " ".join(filings.extract(text).suspect))
+
+    def test_an_mdna_that_opens_late_is_flagged(self):
+        # PG's shape: the span opened inside a citation 34.5k characters past the
+        # real heading, then ran to Item 8 correctly. Length and ordering both fine.
+        text = (
+            "Item 1. Business " + "b" * 40_000
+            + " Item 1A. Risk Factors " + "r" * 40_000
+            + " Item 2. Properties " + "p" * 40_000
+            + " Item 7. Management's Discussion " + "m" * 40_000
+            + " Item 8. Financial Statements " + "f" * 60_000
+        )
+
+        self.assertIn("opening late", " ".join(filings.extract(text).suspect))
+
+    def test_a_filing_with_no_item_8_body_is_not_accused_of_closing_early(self):
+        # DECK has no Item 8 span this rule can anchor on. A missing anchor is not
+        # evidence of a fault; ordering still covers that filing.
+        text = (
+            "Item 1. Business " + "b" * 40_000
+            + " Item 1A. Risk Factors " + "r" * 40_000
+            + " Item 7. Management's Discussion " + "m" * 40_000
+        )
+        faults = " ".join(filings.extract(text).suspect)
+
+        self.assertNotIn("closing early", faults)
+
+    def test_the_complaint_carries_both_sizes_rather_than_just_failing(self):
+        # A bare "extraction looks wrong" cannot be triaged. The numbers are what
+        # tell a reader whether to re-run or to accept an unusual filer.
+        faults = " ".join(filings.extract(self._filing(40_000, 96_000, 3_199)).suspect)
+
+        self.assertRegex(faults, r"3,2\d\d characters")
+        self.assertRegex(faults, r"96,0\d\d for the largest")

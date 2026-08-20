@@ -133,6 +133,13 @@ def read_filing(
         return None, "", "", (), f"filing not read: {exc}"
 
     label = f"10-K filed {filing.filed} (accession {filing.accession})"
+    # A geometry fault means the analyst was handed the wrong text even though
+    # every section came back non-empty. It rides out on ``note`` so it reaches
+    # the alert and the heartbeat, not only the model that was fed it.
+    warning = (
+        "extraction suspect (" + "; ".join(sections.suspect) + ")"
+        if sections.suspect else ""
+    )
     try:
         assessment = value_analyst.assess(
             outcome.ticker,
@@ -144,7 +151,7 @@ def read_filing(
         )
     except (value_analyst.ValueAnalystError, BudgetError) as exc:
         return None, label, filing.url, sections.missing, f"filing not assessed: {exc}"
-    return assessment, label, filing.url, sections.missing, ""
+    return assessment, label, filing.url, sections.missing, warning
 
 
 def build(
