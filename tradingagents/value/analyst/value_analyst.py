@@ -45,6 +45,17 @@ SYSTEM_PROMPT = (
     "Boilerplate risk factors are not risks; cite only what is specific to this "
     "filer. If a section is thin or truncated, say so in evidence_gaps and lower "
     "your confidence rather than inventing coverage.\n\n"
+    # The operator reads these on a phone, in Vietnamese. Only the prose moves:
+    # the enum fields are the ones `message.briefing` and every downstream filter
+    # branch on, and a translated token fails schema validation — which this
+    # module refuses to paper over with a free-text fallback.
+    "Write every free-text field — thesis, accounting_flags, key_risks and "
+    "evidence_gaps — in Vietnamese. The enum fields (verdict, moat, moat_trend, "
+    "customer_concentration, confidence) must keep their exact English schema "
+    "values; they are parsed, not read. Leave tickers, financial-statement line "
+    "items and accounting terms of art in English wherever Vietnamese has no "
+    "settled equivalent — a translated term the operator has to guess at is "
+    "worse than the English one they already know.\n\n"
     f"{NO_EXTERNAL_TOOLS}"
 )
 
