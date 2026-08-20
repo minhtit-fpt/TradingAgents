@@ -18,7 +18,7 @@ Python ≥3.10. Entry points: the `tradingagents` CLI (`cli/main.py`) and
 |---|---|---|---|
 | 1 | Stock graph | `tradingagents/graph/`, `tradingagents/agents/` | short / medium term |
 | 2 | Crypto graph | same pipeline, fundamentals analyst filtered out (`cli/utils.py`) | short / medium term |
-| 3 | **Value module** | `tradingagents/value/` *(phases 1-7 built)* | **long term** |
+| 3 | **Value module** | `tradingagents/value/` *(phases 1-8 built)* | **long term** |
 
 ### Isolation rule (hard requirement)
 
@@ -44,14 +44,40 @@ Conversely, when working on subsystems 1 or 2, do not reach into
 [.claude/plans/long-term-value-investing.md](.claude/plans/long-term-value-investing.md).
 Read it before touching anything under `tradingagents/value/`, together with the
 phase findings beside it: `phase4-findings.md`, `phase4b-clean-universe.md`,
-`phase6-llm-veto.md`, `phase7-human-entry.md`. Two of them are stop conditions —
-the numeric strategy does not beat SPY (4b) and an automated LLM veto at entry
-does not earn its cost (6) — so the module produces evidence for an operator who
-decides, not signals that act. The on-demand dossier is that surface:
+`phase6-llm-veto.md`, `phase7-human-entry.md`, `phase8-alerts-and-ledger.md`. Two
+of them are stop conditions — the numeric strategy does not beat SPY (4b) and an
+automated LLM veto at entry does not earn its cost (6) — so the module produces
+evidence for an operator who decides, not signals that act.
+
+Three surfaces, in the order they are used. The dossier answers "what do the
+numbers say about this name, and at what price would it be cheap":
 
 ```bash
 python -m tradingagents.value.report --ticker PG --read-filing
 ```
+
+The daily job screens everything, alerts on names at the trigger, and sends one
+heartbeat line whether or not anything fired — silence is this screen's normal
+state, so the heartbeat is what separates a quiet market from a dead cron:
+
+```bash
+python -m tradingagents.value.jobs.daily --dry-run
+```
+
+The decision log is the only feedback loop the module has. Record the passes as
+well as the buys — a journal holding only the purchases is survivorship applied
+to yourself:
+
+```bash
+python -m tradingagents.value.decisions record --ticker PG --action pass --why "..."
+```
+
+Two rules that phase 8 rests on and that are easy to erode: alerts fire on
+arithmetic and name no action, and nothing downstream of `alerts/` may write a
+position. The tier-3 filing read is a **briefing, not a gate** — `verdict`
+renders last everywhere because phase 6 measured it covering 70% of picks. Order
+the fields in `alerts.message.briefing`, which the dossier reuses, so the two
+surfaces cannot drift.
 
 ## Commands
 

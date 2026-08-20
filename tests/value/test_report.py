@@ -112,8 +112,13 @@ class DossierTest(unittest.TestCase):
         self.assertIn("thirteen-criterion screen", assess.call_args.args[2])
 
         rendered = "\n".join(report.render(dossier))
-        self.assertIn("read: caution", rendered)
         self.assertIn("not a veto", rendered)
+        # Phase 8 demoted the verdict rather than removing it: it is still there,
+        # but every field phase 6 found actually checkable comes first, and the
+        # 70% that makes `caution` near-meaningless is printed beside it.
+        self.assertIn("verdict: caution", rendered)
+        self.assertIn("70%", rendered)
+        self.assertLess(rendered.index("accounting flags:"), rendered.index("verdict:"))
         # A caution does not remove the entry price: the operator still decides.
         self.assertIn("MoS needs price <=", rendered)
 

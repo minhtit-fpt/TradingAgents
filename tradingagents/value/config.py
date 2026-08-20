@@ -221,3 +221,21 @@ ANALYST_MODEL = os.environ.get("VALUE_ANALYST_MODEL", "deepseek-v4-pro")
 # context is a fraction of that, so Items 1, 1A and 7 are each truncated to this
 # and what was dropped is recorded rather than hidden (plan section 8).
 SECTION_TOKEN_BUDGET = _env_int("VALUE_SECTION_TOKEN_BUDGET", 12_000)
+
+# --- Alerts (phase 8) ----------------------------------------------------------
+#
+# Own namespace, like everything else here: the master plan's `TELEGRAM_BOT_TOKEN`
+# would be shared with subsystems 1 and 2, which the isolation contract forbids.
+#
+# An empty token prints the message to stdout instead of sending it. That is a
+# deliberate exception to this file's never-default rule: it is the development
+# path, it is loud (the whole message is visible), and the alternative is that
+# the daily job cannot be run locally at all without registering a bot.
+TELEGRAM_BOT_TOKEN = os.environ.get("VALUE_TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("VALUE_TELEGRAM_CHAT_ID", "")
+
+# Compose and log, never send. Distinct from an empty token: this suppresses a
+# send that is otherwise fully configured.
+ALERT_DRY_RUN = os.environ.get("VALUE_ALERT_DRY_RUN", "") not in ("", "0", "false", "False")
+
+TELEGRAM_TIMEOUT_SECONDS = _env_float("VALUE_TELEGRAM_TIMEOUT", 15.0)

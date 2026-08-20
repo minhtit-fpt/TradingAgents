@@ -17,6 +17,9 @@ operator can act on rather than an alert to wait for.
 
 The 10-K read is opt-in and priced (``--read-filing``, ~$0.05). It is reading
 material, never a veto: phase 6 measured the veto and it does not earn its cost.
+Section 4 therefore leads with the flags, risks and gaps — the fields phase 6
+found specific and checkable — and prints ``verdict`` last. The ordering lives in
+``alerts.message.briefing`` so the dossier and the alert cannot drift apart.
 """
 
 import argparse
@@ -25,6 +28,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date
 
+from .alerts import message
 from .analyst import value_analyst
 from .analyst.schemas import ValueAssessment
 from .config import (
@@ -301,20 +305,8 @@ def render(dossier: Dossier) -> list[str]:
                 + ", ".join(dossier.sections_missing)
             )
         if assessment is not None:
-            lines.append(
-                f"    read: {assessment.verdict.value} | moat {assessment.moat.value}, "
-                f"trend {assessment.moat_trend.value} | customer concentration "
-                f"{assessment.customer_concentration.value} | confidence "
-                f"{assessment.confidence.value}"
-            )
             lines.append("    A read, not a veto — phase 6 measured the veto and it failed.")
-            for title, items in (
-                ("accounting flags", assessment.accounting_flags),
-                ("key risks", assessment.key_risks),
-                ("evidence gaps", assessment.evidence_gaps),
-            ):
-                lines.append(f"    {title}: {'; '.join(items) if items else 'none stated'}")
-            lines.append(f"    thesis: {assessment.thesis}")
+            lines.extend(f"    {line}" for line in message.briefing(assessment))
         lines.append(f"    spent ${dossier.spend_usd:.4f} of DeepSeek tokens")
 
     return lines

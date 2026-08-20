@@ -117,6 +117,8 @@ statements look excellent. Asked "does the filing contradict the numeric case",
 the honest answer for a name like that is rarely "avoid". The schema's own
 definition makes this explicit: `caution` is a real concern *that does not sink
 the thesis*, and that is the verdict the analyst reached for 82% of the time.
+(Read through a broken section extractor. The controlled re-run below puts it
+at 70% — 31 of the same 44 — with the `avoid` column still empty.)
 
 **So the binding question is not whether tier 3 reads well. It reads well** —
 the flags it raised are specific and checkable (Gillette's $12.8B indefinite-lived
@@ -165,3 +167,96 @@ on a book of 7 names a quarter, cannot be separated from noise. A different use
 of the same reading — sizing, or an exit signal, or a screen that admits weaker
 names for tier 3 to actually reject — is untested, and phase 4b's stop condition
 applies before any of them is worth funding.
+
+---
+
+## Qualification added 2026-08-19 (found in phase 8)
+
+**The 44-filing sample was read through a broken section extractor.**
+`edgar/filings.py` could not tell a heading from a filing's citation of its own
+items, so `extract()` routinely returned the wrong section. Measured across six
+real 10-Ks after the fix:
+
+| filing | what `mdna` actually contained before | after |
+|---|---|---|
+| KO | 3,199 characters, and `risk_factors` held 96k of MD&A text | 109,639 characters of MD&A |
+| PG | 49k opening mid-sentence in a citation | 83,734, opening at the heading |
+| DECK | 22k that was the tail of Item 1 | 49,171 |
+| RMD | 14,653 | 49,910 |
+| ADBE | 13,785 | 46,636 |
+| MSFT | 22,369 | 51,249 |
+
+Five of six were wrong. `backtest/llm_sample.py` calls the same
+`filings.sections_for`, so the analyst in this phase was frequently asked to
+assess Item 1 boilerplate as though it were MD&A.
+
+**Re-measured on 2026-08-20 against the same 44 events.** `--years 7
+--tolerance 1`, fixed extractor, $1.64. This is a controlled pair: identical
+population, identical as-of dates, the same 5 `fetch_10k` failures, the same
+unfiltered book (+11.98% CAGR / 48.6% max DD / 24 closed trades). The only
+difference is which text the analyst was shown.
+
+| | `caution` | `proceed` | `avoid` |
+|---|---|---|---|
+| broken extractor (original) | 36 | 8 | 0 |
+| fixed extractor | **31** | **13** | 0 |
+
+**The 82% does not survive the fix. The figure is 70% (31 of 44).** A net five
+events moved `caution` -> `proceed`; the original run's per-event verdicts were
+not recorded, so five is the net and the per-event churn could be larger.
+
+**The pre-registered verdict is unchanged, and for the same reason as before.**
+Zero `avoid` again, so the default veto still has nothing to veto, still cuts 0%
+of held slots, and the CI is still exactly [+0.00%, +0.00%]. Tier 3 does not earn
+its cost as a gate. That conclusion never depended on the exact `caution` share —
+it depends on the `avoid` column being empty, which it is under both extractors.
+
+**Three wrong claims were made about this before it was measured, and the order
+matters.** First, that the extraction bug was changing verdicts — asserted from a
+single DECK pair, which did not support it. Second, that the flip was model noise
+— asserted from a different-as-of reading of the same name, which is not a
+controlled pair either. Third, that 80% on a 25-event run replicated the 82% —
+that run had silently dropped `--years 7 --tolerance 1` and was a different
+population. The measurement above says the first claim was right and the two
+corrections after it were wrong. None of the three was worth its confidence; only
+this run is evidence.
+
+**What the fix changed most is the briefing.** The flags came back specific and
+checkable in a way the original sample's did not: ResMed's 16.5% effective rate
+resting on a ~$30M IRS interest/penalty refund and a ~$21.4M cessation benefit;
+Applied Materials selling $501M of receivables without recourse while $719M of
+equity-investment gains sat below operating income; Adobe collapsing three
+reportable segments into one from Q1 FY2026, removing the disclosure that showed
+Digital Experience +9% against Publishing -7%, with FY2025 net income up 28% only
+against the prior year's $1B Figma termination fee.
+
+That is what phase 8's field ordering rests on, and it rests on it alone. The
+earlier framing — "`verdict` is uninformative *and*, separately, the promoted
+fields are worth reading" — overstated the independence, because the verdict
+distribution did move (36/8 to 31/13). The ordering argument that survives is the
+narrow one: the flags are specific and checkable, and `verdict` collapses onto one
+label 70% of the time under either extractor. Both halves are still true; they are
+just not as unrelated as claimed.
+
+**A second, separate error: the 25-event run.** Before the controlled re-run
+above, a re-measure was attempted without `--years 7 --tolerance 1` and therefore
+ran the defaults, 10 and 2 — a different candidate universe. It held 25 events
+against 49 (sharing only 15) and its unfiltered book came out at +2.13% CAGR /
+39.7% max DD / 11 closed trades. Nothing was wrong with the store: verified on
+2026-08-20, `--years 7 --tolerance 1` still reproduces 49 events exactly. An
+earlier draft blamed store drift, and that was wrong.
+
+What that episode exposes is that the report gave no way to notice. `--years` and
+`--tolerance` decide which names are candidates at all, and neither appeared
+anywhere in the output — two runs over different halves of the universe printed
+headers that read alike. `llm_sample.setting_label` now puts both in the header
+and in the `--dry-run` count, with `SettingLabelTest` pinning it.
+
+**The standing problem behind all of this.** Both data defects in this module —
+the extraction bug and the dropped flag — were caught because a person happened to
+read one line. The flag case is now instrumented. The extraction case is not: the
+only thing that noticed was the analyst writing "this reads as Item 1 rather than
+MD&A" into `evidence_gaps`, and that only surfaced because phase 8 had just
+promoted that field. A cheap standing assertion on `sections_for` — that a span
+opens at a heading, and that its length is within an order of magnitude of its
+siblings — would have caught it on any run. It is not built.
