@@ -133,6 +133,22 @@ class Arm:
     excess: stats.Interval | None
 
 
+def setting_label(select: str, level: float, years: int, tolerance: int) -> str:
+    """How the universe was cut, printed on every run.
+
+    ``--years`` and ``--tolerance`` change which names are candidates at all, so
+    two runs at different values are different populations rather than the same
+    one re-measured. Phase 6 ran at 7/1 and the defaults are 10/2; a re-run that
+    dropped the flags held 25 events against 49 and the reports were otherwise
+    indistinguishable. The settings go in the header so that comparison cannot be
+    made blind again.
+    """
+    base = f"top {int(level)} by quality rank" if select == "rank" else (
+        f"the configured trigger {level:.0%}"
+    )
+    return f"{base}, {years}y history, tolerance {tolerance}"
+
+
 def events(schedule: Schedule) -> tuple[Event, ...]:
     """Every (ticker, year) the schedule holds, at the earliest date it holds it."""
     first: dict[tuple[str, int], str] = {}
@@ -574,8 +590,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         each = budget_module.cost_usd(args.model, EST_PROMPT_TOKENS, EST_COMPLETION_TOKENS)
-        print(f"{len(all_events)} events held; {len(chosen)} would be assessed with "
-              f"{args.model}")
+        print(f"{len(all_events)} events held at "
+              f"{setting_label(args.select, level, args.years, args.tolerance)}; "
+              f"{len(chosen)} would be assessed with {args.model}")
         print(f"projected worst case: {len(chosen)} x ${each:.3f} = "
               f"${each * len(chosen):.2f} (cached events cost nothing to repeat), "
               f"against a --budget of ${args.budget:.2f}")
@@ -641,8 +658,7 @@ def main(argv: list[str] | None = None) -> int:
         spend_usd=budget.run_spend_usd,
         start=args.start,
         end=args.end,
-        setting=(f"top {int(level)} by quality rank" if ranked
-                 else f"the configured trigger {level:.0%}"),
+        setting=setting_label(args.select, level, args.years, args.tolerance),
         exit_rule=args.exit_rule,
         reps=args.reps,
         seed=args.seed,

@@ -111,6 +111,64 @@ class ExtractionTest(unittest.TestCase):
         self.assertEqual(filings.extract(filings.to_text(html)).business, "")
 
 
+class SelfCitationTest(unittest.TestCase):
+    """A filing citing its own items must neither open nor close a section.
+
+    Both styles below are taken from real 10-Ks read on 2026-08-19. Before this
+    was handled, DECK's citations opened a 22k-character span that was really the
+    tail of Item 1 and won on length, while KO's closed the true MD&A after 3,199
+    characters — five of six filings checked were feeding the analyst the wrong
+    section.
+    """
+
+    def _extract(self, body: str):
+        return filings.extract(filings.to_text(f"<html><body>{body}</body></html>"))
+
+    def test_a_comma_style_citation_neither_opens_nor_closes_a_section(self):
+        # DECK's style: the number sits outside the quotes, followed by a comma.
+        sections = self._extract(
+            f"<p>Item 1. Business</p><p>Refer to Part II, Item 7, "
+            f"&ldquo;Management's Discussion and Analysis,&rdquo; for more. {BODY_1}</p>"
+            f"<p>Item 1A. Risk Factors</p><p>{BODY_1A}</p>"
+            f"<p>Item 7. Management's Discussion and Analysis</p><p>{BODY_7}</p>"
+            f"<p>Item 8. Financial Statements</p><p>See F-1.</p>"
+        )
+
+        self.assertIn("Net sales rose", sections.mdna)
+        # The citation sat inside Item 1, so Item 1's body must still be whole
+        # and none of it may leak into the section the citation named.
+        self.assertIn("industrial fasteners", sections.business)
+        self.assertNotIn("industrial fasteners", sections.mdna)
+
+    def test_a_quoted_style_citation_neither_opens_nor_closes_a_section(self):
+        # KO's style: the number sits *inside* the quotes, so the character after
+        # it is the same full stop a heading uses. Only the opening quote before
+        # it tells the two apart.
+        sections = self._extract(
+            f"<p>Item 1. Business</p><p>{BODY_1}</p>"
+            f"<p>Item 1A. Risk Factors</p><p>{BODY_1A}</p>"
+            f"<p>Item 7. Management's Discussion and Analysis</p>"
+            f"<p>As set forth in Part I, &ldquo;Item 1A. Risk Factors&rdquo; of this "
+            f"report, results may vary. {BODY_7}</p>"
+            f"<p>Item 8. Financial Statements</p><p>See F-1.</p>"
+        )
+
+        self.assertIn("Net sales rose", sections.mdna)
+        self.assertNotIn("Net sales rose", sections.risk_factors)
+        self.assertIn("construction downturn", sections.risk_factors)
+
+    def test_the_lookback_does_not_run_off_the_start_of_the_filing(self):
+        # No preceding character at all: the first heading must survive.
+        sections = self._extract(
+            f"<p>Item 1. Business</p><p>{BODY_1}</p>"
+            f"<p>Item 1A. Risk Factors</p><p>{BODY_1A}</p>"
+            f"<p>Item 7. Management's Discussion and Analysis</p><p>{BODY_7}</p>"
+            f"<p>Item 8. Financial Statements</p><p>See F-1.</p>"
+        )
+
+        self.assertIn("industrial fasteners", sections.business)
+
+
 class FetchTest(unittest.TestCase):
     def test_picks_the_latest_10k_filed_on_or_before_the_as_of_date(self):
         client = _FakeClient(

@@ -47,6 +47,39 @@ CREATE TABLE IF NOT EXISTS screen_results (
     mos_pct         REAL,
     PRIMARY KEY (ticker, as_of)
 );
+
+-- One row per (name, trigger date). queued_at is written before Telegram is
+-- called and sent_at only after it confirms, so an outage leaves a row the next
+-- run retries rather than an alert nobody ever sees (plan section 9.4).
+CREATE TABLE IF NOT EXISTS alerts (
+    ticker       TEXT NOT NULL,
+    trigger_date TEXT NOT NULL,
+    mos_pct      REAL NOT NULL,
+    price        REAL NOT NULL,
+    queued_at    TEXT NOT NULL,
+    sent_at      TEXT,
+    PRIMARY KEY (ticker, trigger_date)
+);
+
+-- Append-only. Changing your mind is a new row, never an edit: a journal that
+-- can be rewritten after the fact is not evidence about your past self. The
+-- price/value columns snapshot the numbers as they stood, so a review years from
+-- now does not have to re-derive them from a store that has moved on.
+CREATE TABLE IF NOT EXISTS decisions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker          TEXT NOT NULL,
+    decided_on      TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    reason          TEXT NOT NULL,
+    price           REAL,
+    intrinsic_value REAL,
+    mos_pct         REAL,
+    screen_passed   INTEGER,
+    filing_read     INTEGER NOT NULL DEFAULT 0,
+    recorded_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS decisions_by_ticker ON decisions (ticker, decided_on);
 """
 
 
@@ -250,3 +283,125 @@ def cik_for(conn: sqlite3.Connection, ticker: str) -> int | None:
         "SELECT cik FROM facts WHERE ticker = ? LIMIT 1", (ticker.upper(),)
     ).fetchone()
     return int(row["cik"]) if row else None
+
+
+# --- Alerts (phase 8) ----------------------------------------------------------
+#
+# Dedupe is one predicate over this table, so it lives here with the rest of the
+# module's state rather than in an `alerts/dedupe.py` whose whole body would be
+# `not alert_queued(...)`.
+
+
+def alert_queued(conn: sqlite3.Connection, ticker: str, trigger_date: str) -> bool:
+    """Has this (name, trigger date) already been queued by any earlier run?"""
+    row = conn.execute(
+        "SELECT 1 FROM alerts WHERE ticker = ? AND trigger_date = ?",
+        (ticker.upper(), trigger_date),
+    ).fetchone()
+    return row is not None
+
+
+def queue_alert(
+    conn: sqlite3.Connection,
+    ticker: str,
+    trigger_date: str,
+    mos_pct: float,
+    price: float,
+    queued_at: str,
+) -> bool:
+    """Claim the send. Returns False if another run already claimed it.
+
+    Written *before* the Telegram call: a crash between here and the send leaves
+    a row with ``sent_at`` NULL, which ``unsent_alerts`` hands back to the next
+    run. The opposite order loses the alert entirely on any failure.
+    """
+    with conn:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO alerts "
+            "(ticker, trigger_date, mos_pct, price, queued_at, sent_at) "
+            "VALUES (?, ?, ?, ?, ?, NULL)",
+            (ticker.upper(), trigger_date, mos_pct, price, queued_at),
+        )
+    return cursor.rowcount == 1
+
+
+def confirm_alert(conn: sqlite3.Connection, ticker: str, trigger_date: str, sent_at: str) -> None:
+    """Record that Telegram accepted the message."""
+    with conn:
+        conn.execute(
+            "UPDATE alerts SET sent_at = ? WHERE ticker = ? AND trigger_date = ?",
+            (sent_at, ticker.upper(), trigger_date),
+        )
+
+
+def unsent_alerts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Alerts queued but never confirmed — the retry queue, oldest first."""
+    return conn.execute(
+        "SELECT * FROM alerts WHERE sent_at IS NULL ORDER BY queued_at, ticker"
+    ).fetchall()
+
+
+# --- Decision log (phase 8) ----------------------------------------------------
+
+
+def record_decision(
+    conn: sqlite3.Connection,
+    ticker: str,
+    decided_on: str,
+    action: str,
+    reason: str,
+    recorded_at: str,
+    *,
+    price: float | None = None,
+    intrinsic_value: float | None = None,
+    mos_pct: float | None = None,
+    screen_passed: bool | None = None,
+    filing_read: bool = False,
+) -> int:
+    """Append one decision. Returns its id.
+
+    INSERT only — there is deliberately no update or delete. A decision that
+    turns out wrong is followed by another decision, and both rows are the point.
+    """
+    if not reason.strip():
+        raise ValueError("a decision with no stated reason is not worth recording")
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO decisions "
+            "(ticker, decided_on, action, reason, price, intrinsic_value, mos_pct, "
+            " screen_passed, filing_read, recorded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                ticker.upper(),
+                decided_on,
+                action,
+                reason.strip(),
+                price,
+                intrinsic_value,
+                mos_pct,
+                None if screen_passed is None else int(screen_passed),
+                int(filing_read),
+                recorded_at,
+            ),
+        )
+    return int(cursor.lastrowid)
+
+
+def decisions(
+    conn: sqlite3.Connection,
+    *,
+    ticker: str | None = None,
+    since: str | None = None,
+) -> list[sqlite3.Row]:
+    """The log, oldest first. Chronological order is the whole point of it."""
+    clauses, params = [], []
+    if ticker:
+        clauses.append("ticker = ?")
+        params.append(ticker.upper())
+    if since:
+        clauses.append("decided_on >= ?")
+        params.append(since)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.execute(
+        f"SELECT * FROM decisions{where} ORDER BY decided_on, id", params
+    ).fetchall()

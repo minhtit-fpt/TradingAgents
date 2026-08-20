@@ -36,6 +36,42 @@ _TARGETS = (("1", "business"), ("1A", "risk_factors"), ("7", "mdna"))
 
 _ITEM_RE = re.compile(r"\bitem\s+(\d{1,2}[abc]?)\b", re.IGNORECASE)
 
+# A filing cites its own items constantly — `Item 7, "Management's Discussion
+# and Analysis…"` appears eight times inside DECK's Item 1 alone. Those citations
+# broke extraction in both directions: one opened a 22k-character span that was
+# really the tail of Item 1 and won on length, and another closed the real MD&A
+# after 1,260 characters. The analyst caught it and said so in `evidence_gaps`
+# ("reads as Item 1 operational text rather than MD&A"), which is the only reason
+# it was ever noticed.
+#
+# A heading introduces its title — `Item 7. MANAGEMENT'S DISCUSSION` — while a
+# citation continues a sentence. Punctuation is what separates them, and filers
+# punctuate in two different places:
+#
+#   DECK  Part II, Item 7, "Management's Discussion…"   -> comma *after* the number
+#   KO    in Part I, "Item 1. Business" of this report  -> quote *before* it
+#
+# KO's form is the reason this needs both tests. Its number sits inside the
+# quotation marks, so the character after it is the same full stop a real heading
+# uses, and an after-only rule reads every citation in the filing as a heading.
+_XREF_AFTER_RE = re.compile(
+    r"""\s*(?:[,;)"'”’]                                     # Item 7, "Management's…"
+        |(?:of|in|to|above|below|under|and|or|herein|hereof|thereof)\b)""",
+    re.IGNORECASE | re.VERBOSE,
+)
+_QUOTE_OPENERS = ('"', "'", "“", "‘")
+
+
+def _is_citation(text: str, start: int, end: int) -> bool:
+    """Does this ``Item N`` cite a section rather than open one?"""
+    if _XREF_AFTER_RE.match(text, end):
+        return True
+    # Bounded lookback: text is whitespace-collapsed, so the quote is the
+    # character before the marker or nothing is. Slicing the whole prefix here
+    # would copy the filing once per marker.
+    before = text[max(0, start - 4):start].rstrip()
+    return bool(before) and before[-1] in _QUOTE_OPENERS
+
 # A section shorter than this is a cross-reference or a stray heading match, not
 # a body. Item 1A alone runs to tens of thousands of characters in any real 10-K.
 _MIN_SECTION_CHARS = 1_000
@@ -92,9 +128,15 @@ def to_text(html: str) -> str:
 
 
 def extract(text: str, token_budget: int = SECTION_TOKEN_BUDGET) -> Sections:
-    """Pull Items 1, 1A and 7 out of a stripped 10-K and truncate each."""
+    """Pull Items 1, 1A and 7 out of a stripped 10-K and truncate each.
+
+    Citations are dropped before any span is measured, so they neither open a
+    section nor close one. Dropping them in only one direction would trade this
+    filing's wrong section for the next filing's truncated one.
+    """
     markers = [(match.start(), match.end(), match.group(1).upper())
-               for match in _ITEM_RE.finditer(text)]
+               for match in _ITEM_RE.finditer(text)
+               if not _is_citation(text, match.start(), match.end())]
 
     bodies: dict[str, str] = {}
     dropped: list[tuple[str, int]] = []

@@ -383,6 +383,28 @@ class ReportTest(unittest.TestCase):
         self.assertIn("left unvetoed", text)
 
 
+class SettingLabelTest(unittest.TestCase):
+    """Phase 6 ran at --years 7 --tolerance 1; the defaults are 10/2. A re-run
+    that dropped the flags held 25 events against 49 and nothing in the output
+    said so."""
+
+    def test_the_label_carries_the_two_flags_that_change_the_population(self):
+        label = llm_sample.setting_label("trigger", 0.30, 7, 1)
+
+        self.assertIn("7y history", label)
+        self.assertIn("tolerance 1", label)
+
+    def test_two_runs_at_different_history_lengths_do_not_read_alike(self):
+        self.assertNotEqual(
+            llm_sample.setting_label("trigger", 0.30, 7, 1),
+            llm_sample.setting_label("trigger", 0.30, 10, 2),
+        )
+
+    def test_the_rank_selection_keeps_its_own_label(self):
+        self.assertIn("top 15 by quality rank",
+                      llm_sample.setting_label("rank", 15.0, 10, 2))
+
+
 class CommandLineTest(unittest.TestCase):
     """The step-5 lesson: the suite covered every function but not the entry point."""
 
