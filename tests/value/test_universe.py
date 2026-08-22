@@ -70,6 +70,32 @@ class UniverseTest(unittest.TestCase):
 
         self.assertIn("below the", self.reason_for("SPARSE"))
 
+    def test_a_filer_with_no_cost_of_revenue_is_excluded_not_failed_on_margin(self):
+        # McDonald's, Exxon, Union Pacific and every bank report no cost of
+        # sales, so gross profit cannot be resolved or derived. Reporting them
+        # as failing the margin criteria states a verdict the filing does not
+        # support.
+        no_cost = decade()
+        for facts in no_cost.values():
+            facts.pop("GrossProfit")
+            facts.pop("CostOfRevenue")
+
+        self.ingest("BANK", no_cost)
+
+        self.assertIn("gross profit resolves for only 0 of 10", self.reason_for("BANK"))
+
+    def test_a_couple_of_missing_gross_profit_years_still_screen(self):
+        # Within the violation tolerance the criteria can still reach a verdict,
+        # so the company belongs in the screen rather than in the exclusions.
+        gappy = decade()
+        for year in sorted(gappy)[:2]:
+            gappy[year].pop("GrossProfit")
+            gappy[year].pop("CostOfRevenue")
+
+        self.ingest("GAPPY", gappy)
+
+        self.assertIsNone(self.reason_for("GAPPY"))
+
     def test_history_is_judged_as_of_the_date_not_as_of_today(self):
         self.ingest("GOOD", decade())
 

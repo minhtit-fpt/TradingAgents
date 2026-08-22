@@ -17,7 +17,7 @@ universe nobody notices is broken.
 import sqlite3
 from dataclasses import dataclass
 
-from ..config import HISTORY_YEARS, MIN_CONCEPT_COVERAGE
+from ..config import HISTORY_YEARS, MIN_CONCEPT_COVERAGE, VIOLATION_TOLERANCE
 from ..store import db
 
 
@@ -90,5 +90,19 @@ def _rejection(
     latest = series[max(series)]
     if not latest.get("Revenue"):
         return "no revenue in the latest fiscal year (blank-check shell)"
+
+    # Four of the thirteen criteria divide by gross profit, and a filer with no
+    # cost-of-revenue line anywhere — McDonald's, Exxon, Union Pacific, and every
+    # bank — cannot produce one from any tag or identity. Left to the screen those
+    # four count as violations and the company is reported as failing on margin,
+    # which reads as a verdict on the business rather than on the filing. Excluded
+    # with its reason instead: unevaluable is not the same as bad.
+    evaluable = sum(1 for year in series if "GrossProfit" in series[year])
+    if evaluable < years - VIOLATION_TOLERANCE:
+        return (
+            f"gross profit resolves for only {evaluable} of {years} years — "
+            "no cost-of-revenue line to compute it from (financial, or a filer "
+            "that reports no cost of sales)"
+        )
 
     return None

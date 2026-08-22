@@ -19,8 +19,10 @@ extrapolating one lucky decade into a number ten times too large.
 
 One deliberate simplification, recorded rather than hidden:
 ``graham_number`` and ``owner_earnings_per_share`` are sanity anchors, not
-inputs. When the equity-bond value and the Graham number disagree by an order of
-magnitude, the DCF is broken and the report should show it.
+inputs. The Graham number ignores growth, so it is compared against
+``earnings_power_value`` — this same formula with growth set to zero — and not
+against the projected value. Comparing it to the projected value only measured
+whether the company grows, which every name reaching the trigger does.
 
 Pure functions: no store, no network. ``price`` and ``median_pe`` are supplied
 by the caller, which is what keeps this module replayable in a backtest.
@@ -58,6 +60,7 @@ class Valuation:
     payout_ratio: float | None
     dividend_value: float
     intrinsic_value: float
+    earnings_power_value: float
     price: float
     margin_of_safety: float
     graham_number: float | None
@@ -65,10 +68,16 @@ class Valuation:
 
     @property
     def graham_disagrees(self) -> bool:
-        """True when the two methods differ by more than 3x — read the inputs."""
+        """True when the two no-growth methods differ by more than 3x.
+
+        Both sides value the latest year's earnings without projecting growth:
+        the Graham number off book value, ``earnings_power_value`` off the
+        terminal multiple. A gap here means an input is wrong — book value,
+        share count, or the earnings figure — not that the company compounds.
+        """
         if not self.graham_number or self.graham_number <= 0:
             return False
-        ratio = self.intrinsic_value / self.graham_number
+        ratio = self.earnings_power_value / self.graham_number
         return ratio > 3.0 or ratio < 1 / 3.0
 
 
@@ -168,6 +177,11 @@ def value(
     dividends = _dividend_stream(latest_eps, growth, rate, payout, projection_years)
     intrinsic = dividends + terminal
 
+    # The growth-free twin of the same formula, used only as the Graham anchor.
+    earnings_power = _dividend_stream(
+        latest_eps, 0.0, rate, payout, projection_years
+    ) + latest_eps * terminal_pe / (1 + rate) ** projection_years
+
     return Valuation(
         eps=tuple(eps),
         growth_rate=growth,
@@ -179,6 +193,7 @@ def value(
         payout_ratio=payout,
         dividend_value=dividends,
         intrinsic_value=intrinsic,
+        earnings_power_value=earnings_power,
         price=price,
         margin_of_safety=(intrinsic - price) / intrinsic,
         graham_number=graham_number(financials),
