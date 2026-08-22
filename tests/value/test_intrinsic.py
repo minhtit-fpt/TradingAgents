@@ -184,8 +184,19 @@ class SanityAnchorTest(unittest.TestCase):
 
         self.assertAlmostEqual(intrinsic.owner_earnings_per_share(series), 2.5, places=9)
 
-    def test_a_wild_gap_between_the_two_methods_is_flagged(self):
-        valuation = intrinsic.value(decade(growth=0.30), price=50.0, discount_rate=0.05)
+    def test_growth_alone_does_not_flag_a_disagreement(self):
+        # The Graham number ignores growth, so it is anchored against the
+        # growth-free earnings power. A compounder is not a broken input.
+        valuation = intrinsic.value(decade(growth=0.10), price=50.0, discount_rate=0.05)
+
+        self.assertFalse(valuation.graham_disagrees)
+
+    def test_a_collapsed_book_value_is_flagged(self):
+        series = decade(growth=0.30)
+        latest = max(series)
+        series[latest]["Equity"] = series[latest]["Equity"] / 100
+
+        valuation = intrinsic.value(series, price=50.0, discount_rate=0.05)
 
         self.assertTrue(valuation.graham_disagrees)
 

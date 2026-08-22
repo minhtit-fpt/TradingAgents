@@ -24,6 +24,17 @@ def payload(**tags):
     }
 
 
+def quarters(first_start, ends, vals, filed, accn="acc-1"):
+    """Contiguous quarterly rows, as the quarterly note of a 10-K reports them."""
+    rows = []
+    start = first_start
+    for end, val in zip(ends, vals, strict=True):
+        rows.append({"start": start, "end": end, "val": val,
+                     "filed": filed, "accn": accn, "form": "10-K"})
+        start = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
+    return rows
+
+
 def values(facts, concept):
     return {f.fiscal_year: f.value for f in facts if f.concept == concept}
 
@@ -247,6 +258,114 @@ class DerivationTest(unittest.TestCase):
         ))
 
         self.assertEqual(values(facts, "GrossProfit"), {2020: 40.0})
+
+    def test_split_product_and_service_costs_are_summed(self):
+        # Thermo Fisher, Northrop and Intuit report the two halves with no
+        # combined total. Reading the goods half alone would put gross profit
+        # 25 too high here, which is criterion 1 passing on a number the filing
+        # does not contain.
+        facts = annual_facts(payload(
+            Revenues=("USD", [duration("2020-12-31", 100.0, "2021-02-10")]),
+            CostOfGoodsSold=("USD", [duration("2020-12-31", 40.0, "2021-02-10")]),
+            CostOfServices=("USD", [duration("2020-12-31", 25.0, "2021-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "CostOfRevenue"), {2020: 65.0})
+        self.assertEqual(values(facts, "GrossProfit"), {2020: 35.0})
+
+    def test_a_goods_only_filer_still_resolves_its_cost_of_revenue(self):
+        facts = annual_facts(payload(
+            Revenues=("USD", [duration("2020-12-31", 100.0, "2021-02-10")]),
+            CostOfGoodsSold=("USD", [duration("2020-12-31", 40.0, "2021-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "CostOfRevenue"), {2020: 40.0})
+
+    def test_a_split_pair_is_never_mixed_across_two_filings(self):
+        facts = annual_facts(payload(
+            Revenues=("USD", [duration("2020-12-31", 100.0, "2021-02-10", accn="acc-1")]),
+            CostOfGoodsSold=(
+                "USD", [duration("2020-12-31", 40.0, "2021-02-10", accn="acc-1")]),
+            CostOfServices=(
+                "USD", [duration("2020-12-31", 25.0, "2022-02-10", accn="acc-2")]),
+        ))
+
+        # The goods half stands alone rather than being summed with a figure
+        # from a different filing.
+        self.assertEqual(values(facts, "CostOfRevenue"), {2020: 40.0})
+
+    def test_a_reported_combined_cost_is_never_replaced_by_the_split_halves(self):
+        facts = annual_facts(payload(
+            Revenues=("USD", [duration("2020-12-31", 100.0, "2021-02-10")]),
+            CostOfRevenue=("USD", [duration("2020-12-31", 60.0, "2021-02-10")]),
+            CostOfGoodsSold=("USD", [duration("2020-12-31", 40.0, "2021-02-10")]),
+            CostOfServices=("USD", [duration("2020-12-31", 25.0, "2021-02-10")]),
+        ))
+
+        self.assertEqual(values(facts, "CostOfRevenue"), {2020: 60.0})
+
+    def test_a_year_is_rebuilt_from_the_quarterly_columns_of_a_10k(self):
+        # Since 2018 Thermo Fisher and Intuit publish no dimensionless annual
+        # cost line, only the quarterly note. Without this the modern half of
+        # their history leaves four criteria unevaluable.
+        facts = annual_facts(payload(
+            Revenues=("USD", [duration("2020-12-31", 100.0, "2021-02-10")]),
+            CostOfRevenue=("USD", quarters(
+                "2020-01-01",
+                ["2020-03-31", "2020-06-30", "2020-09-30", "2020-12-31"],
+                [15.0, 15.0, 15.0, 15.0],
+                "2021-02-10",
+            )),
+        ))
+
+        self.assertEqual(values(facts, "CostOfRevenue"), {2020: 60.0})
+        self.assertEqual(values(facts, "GrossProfit"), {2020: 40.0})
+
+    def test_a_rolling_four_quarters_is_not_reported_as_a_fiscal_year(self):
+        # Six quarters in one filing also contain windows that span twelve
+        # months without being anyone's fiscal year. Only the run closing on the
+        # year end the filer itself reported counts.
+        rows = quarters(
+            "2020-07-01",
+            ["2020-09-30", "2020-12-31", "2021-03-31", "2021-06-30",
+             "2021-09-30", "2021-12-31"],
+            [10.0, 10.0, 20.0, 20.0, 30.0, 30.0],
+            "2022-02-10",
+        )
+        facts = annual_facts(payload(
+            Revenues=("USD", [duration("2021-12-31", 300.0, "2022-02-10")]),
+            CostOfRevenue=("USD", rows),
+        ))
+
+        # 2021 is the calendar year the filer closed on: 20+20+30+30.
+        self.assertEqual(values(facts, "CostOfRevenue"), {2021: 100.0})
+
+    def test_a_reported_annual_cost_is_never_replaced_by_a_rollup(self):
+        facts = annual_facts(payload(
+            Revenues=("USD", [duration("2020-12-31", 100.0, "2021-02-10")]),
+            CostOfRevenue=("USD", [duration("2020-12-31", 55.0, "2021-02-10")] + quarters(
+                "2020-01-01",
+                ["2020-03-31", "2020-06-30", "2020-09-30", "2020-12-31"],
+                [15.0, 15.0, 15.0, 15.0],
+                "2021-02-10",
+            )),
+        ))
+
+        self.assertEqual(values(facts, "CostOfRevenue"), {2020: 55.0})
+
+    def test_a_gap_in_the_quarterly_note_produces_no_year(self):
+        rows = quarters(
+            "2020-01-01",
+            ["2020-03-31", "2020-06-30", "2020-09-30"],
+            [15.0, 15.0, 15.0],
+            "2021-02-10",
+        )
+        facts = annual_facts(payload(
+            Revenues=("USD", [duration("2020-12-31", 100.0, "2021-02-10")]),
+            CostOfRevenue=("USD", rows),
+        ))
+
+        self.assertEqual(values(facts, "CostOfRevenue"), {})
 
     def test_total_operating_expenses_are_not_read_as_cost_of_revenue(self):
         # CostsAndExpenses and OperatingExpenses are the whole expense base, not
