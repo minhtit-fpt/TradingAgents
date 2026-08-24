@@ -216,7 +216,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(outcomes[0].ticker, "PG")
         text = "\n".join(runner.render(outcomes, AS_OF))
         self.assertIn("1 of 2 pass", text)
-        self.assertIn("DividendNeverCut: 2020", text)
+        self.assertIn("DividendNeverCut: failed 2020", text)
 
 
 if __name__ == "__main__":
@@ -234,12 +234,12 @@ class IndependenceTest(unittest.TestCase):
     # read-only reuse: knobs that must not have two parsing rules, the fact store
     # it screens over, and the two result dataclasses the business screen already
     # defines. Anything else belongs in this package.
-    # ``from ..store import db`` resolves to the package, not the module, so the
-    # store is allowlisted at package level; it holds one module.
     OUTWARD_ALLOWLIST = {
         "tradingagents.value.config",
-        "tradingagents.value.store",
+        "tradingagents.value.store.db",
         "tradingagents.value.screen.criteria",
+        "tradingagents.value.screen.market",
+        "tradingagents.value.alerts.telegram",
     }
 
     def setUp(self):
@@ -262,8 +262,27 @@ class IndependenceTest(unittest.TestCase):
                         found.add(node.module)
                     continue
                 base = package.rsplit(".", node.level - 1)[0] if node.level > 1 else package
-                found.add(f"{base}.{node.module}" if node.module else base)
+                resolved = f"{base}.{node.module}" if node.module else base
+                # ``from ..store import db`` names a module, not an attribute, so
+                # resolve it the rest of the way — otherwise the allowlist would
+                # have to admit whole packages to permit one file in them.
+                submodules = {
+                    module
+                    for module in (self._submodule(resolved, alias.name) for alias in node.names)
+                    if module
+                }
+                found.update(submodules or {resolved})
         return found
+
+    def _submodule(self, package: str, name: str) -> str | None:
+        """``package.name`` when that is a module on disk, else ``None``."""
+        prefix = "tradingagents.value."
+        if not package.startswith(prefix):
+            return None
+        relative = package[len(prefix):].replace(".", "/")
+        if (self.value_root / relative / f"{name}.py").exists():
+            return f"{package}.{name}"
+        return None
 
     def test_nothing_in_the_value_module_depends_on_the_dividend_screen(self):
         offenders = []
@@ -297,3 +316,33 @@ class IndependenceTest(unittest.TestCase):
 
         schema = (self.value_root / "store" / "db.py").read_text(encoding="utf-8")
         self.assertNotIn("TABLE IF NOT EXISTS dividends", schema)
+
+
+class WhyTest(unittest.TestCase):
+    """A criterion nobody could evaluate must not read as one the business failed."""
+
+    def setUp(self):
+        self.conn = store.connect(":memory:")
+        self.addCleanup(self.conn.close)
+
+    def result(self, financials):
+        return criteria.evaluate(rising_dps(), financials, years_required=YEARS)
+
+    def test_missing_inputs_are_labelled_no_data_not_failed(self):
+        financials = {
+            year: {k: v for k, v in facts.items() if k != "Capex"}
+            for year, facts in decade(FIRST_YEAR, YEARS).items()
+        }
+        text = "\n".join(runner.render([runner.Outcome("ADP", result=self.result(financials))],
+                                       AS_OF))
+        self.assertIn("FreeCashFlowCover: no data", text)
+        self.assertNotIn("FreeCashFlowCover: failed", text)
+
+    def test_real_violations_are_still_labelled_failed(self):
+        financials = {
+            year: {**facts, "DividendsPaid": facts["NetIncome"] * 0.9}
+            for year, facts in decade(FIRST_YEAR, YEARS).items()
+        }
+        text = "\n".join(runner.render([runner.Outcome("XYZ", result=self.result(financials))],
+                                       AS_OF))
+        self.assertIn("PayoutRatio: failed", text)

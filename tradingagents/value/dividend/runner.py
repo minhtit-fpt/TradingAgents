@@ -111,10 +111,28 @@ def render(outcomes: list[Outcome], as_of: str) -> list[str]:
             f"{outcome.ticker:<6} {verdict:<6} quality {result.quality:.0%}, {latest}"
         )
         if not result.passed:
-            for criterion in result.criteria:
-                if criterion.blocking and not criterion.passed:
-                    bad = ", ".join(str(year) for year in criterion.bad_years)
-                    lines.append(f"        {criterion.name}: {bad}")
+            lines.extend(_why(result))
+    return lines
+
+
+def _why(result: ScreenResult) -> list[str]:
+    """The failed criteria, keeping "failed" and "no data" apart.
+
+    Merging them is how ADP reads as a company that cannot cover its dividend
+    when the truth is that EDGAR gave us no capex line for it. One is a finding
+    about the business, the other about our data, and they call for opposite
+    responses.
+    """
+    lines = []
+    for criterion in result.criteria:
+        if not criterion.blocking or criterion.passed:
+            continue
+        parts = []
+        if criterion.violation_years:
+            parts.append("failed " + ", ".join(str(y) for y in criterion.violation_years))
+        if criterion.missing_years:
+            parts.append("no data " + ", ".join(str(y) for y in criterion.missing_years))
+        lines.append(f"        {criterion.name}: {'; '.join(parts) or 'insufficient history'}")
     return lines
 
 

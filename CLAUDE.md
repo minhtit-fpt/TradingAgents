@@ -49,6 +49,11 @@ of them are stop conditions — the numeric strategy does not beat SPY (4b) and 
 automated LLM veto at entry does not earn its cost (6) — so the module produces
 evidence for an operator who decides, not signals that act.
 
+`dividend-screen.md` beside them plans `tradingagents/value/dividend/`, which is
+independent of the rest of `value/` down to its own config and its own table —
+read it before editing anything in that directory, and keep the arrow pointing
+outward: nothing in `value/` may import from `dividend/`.
+
 Three surfaces, in the order they are used. The dossier answers "what do the
 numbers say about this name, and at what price would it be cheap":
 
