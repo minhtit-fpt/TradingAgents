@@ -240,6 +240,11 @@ class IndependenceTest(unittest.TestCase):
         "tradingagents.value.screen.criteria",
         "tradingagents.value.screen.market",
         "tradingagents.value.alerts.telegram",
+        # The replay reuses the price cache and the interval arithmetic rather
+        # than growing a third copy of either. Read-only, like the rest of this
+        # list: nothing in ``backtest/`` learns that this package exists.
+        "tradingagents.value.backtest.prices",
+        "tradingagents.value.backtest.stats",
     }
 
     def setUp(self):

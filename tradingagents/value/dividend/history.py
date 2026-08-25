@@ -53,6 +53,48 @@ def fetch(ticker: str) -> list[tuple[str, float]]:
     ]
 
 
+def last_closes(tickers: list[str]) -> dict[str, float]:
+    """Latest close for many names, in one download. Names without one are absent.
+
+    One request rather than one per name, which is what makes a yield column over
+    the whole pass list affordable at all -- the alternative was pricing a slice
+    and calling the slice a ranking.
+
+    Any close basis is the same basis at the latest bar: splits and dividends are
+    adjusted *backwards*, and nothing comes after today to adjust for. That is
+    the same fact ``weekly.forward_yield`` rests on, and it is why this function
+    may not be reused for any earlier date.
+    """
+    if not tickers:
+        return {}
+    import yfinance as yf
+
+    try:
+        frame = yf.download(
+            tickers=" ".join(sorted(tickers)),
+            period="5d",
+            interval="1d",
+            progress=False,
+            auto_adjust=True,
+            threads=True,
+        )
+    except Exception as exc:
+        raise DividendError(f"price lookup failed: {exc}") from exc
+
+    if frame is None or frame.empty or "Close" not in frame:
+        raise DividendError("price lookup returned nothing")
+
+    closes = frame["Close"]
+    if not hasattr(closes, "columns"):  # a single ticker comes back as a Series
+        closes = closes.to_frame(name=sorted(tickers)[0])
+    out = {}
+    for ticker in closes.columns:
+        series = closes[ticker].dropna()
+        if not series.empty and float(series.iloc[-1]) > 0:
+            out[str(ticker)] = float(series.iloc[-1])
+    return out
+
+
 def refresh(conn, ticker: str, *, fetcher=fetch, now: str | None = None) -> int:
     """Fetch and cache one name's history. Returns the number of payments cached."""
     stamp = now or datetime.now(timezone.utc).isoformat(timespec="seconds")

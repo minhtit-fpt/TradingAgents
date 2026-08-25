@@ -1,7 +1,8 @@
-# Dividend feature — the screen (D1), the book (D2), the weekly job (D3)
+# Dividend feature — the screen (D1), the book (D2), the weekly job (D3), the backtest (D4)
 
 Deliverable: `tradingagents/value/dividend/`. Tests: `tests/value/test_dividend.py`,
-`tests/value/test_dividend_ledger.py`, `tests/value/test_dividend_weekly.py`.
+`tests/value/test_dividend_ledger.py`, `tests/value/test_dividend_weekly.py`,
+`tests/value/test_dividend_backtest.py`.
 Branch: `feat/value-dividend-screen`, cut from `origin/main` after phase 8 merged.
 
 ## Why this phase exists
@@ -422,14 +423,297 @@ when the dividend cache was empty — a number that means "unknown" must never
 render as one that means "zero". The concept gap itself is in
 `value/edgar/concepts.py`, outside this feature and left alone.
 
+## D4 — the backtest
+
+`tradingagents/value/dividend/backtest.py`, tests in
+`tests/value/test_dividend_backtest.py`. Closes both items that D3 left open.
+
+The question is deliberately narrower than phase 4b's. That replay asked whether
+a screen beat SPY, which needs a simulated book, costs and a rebalance schedule.
+This one asks the thing the dividend screen actually claims:
+
+> a name that clears the screen on date X — does it still hold its dividend
+> through X+horizon, more often than a name that failed the screen on the same
+> date?
+
+It is answerable from the dividend cache alone, offline, before any question
+about price. A screen that cannot separate the cutters is not worth pricing.
+
+**The line that matters.** The forward window is look-ahead on purpose: it is the
+outcome being scored, not an input to the decision. Everything on the decision
+side — dividend history and 10-K facts alike — goes through the same
+point-in-time filters the live screen uses, and a test pins exactly that: a name
+whose dividend collapses in the first forward year must still *pass* the screen
+standing on the cohort date.
+
+Design notes worth keeping:
+
+- **Baseline is the last year the screen itself saw**, not the first forward
+  year. Otherwise a board that cuts immediately reads as a new record starting
+  low.
+- **A year with no payment is a fall to zero, not missing data.** A payer that
+  simply stops has done the exact thing the screen exists to avoid; calling that
+  "no data" would score the worst outcome as the absence of one.
+- **One read of the inputs answers every grid cell.** The payout sweep differs
+  in a single comparison, so screening the universe once per cell would triple
+  the work for the same three answers.
+- **Cluster bootstrap over cohort dates**, not over names. Two payers screened
+  the same morning share a market; resampling them independently would treat one
+  correlated decade as a few hundred trials — the phase-4 error in a new costume.
+  The cost is a wide interval, and a wide honest interval is the finding.
+- **Return uses split-adjusted `Close`, never `market.AS_TRADED`.** This is the
+  only place in the feature that puts a price and a figure from the `dividends`
+  table over one line, and the two share a basis exactly when the price is the
+  split-adjusted one. `AS_TRADED` undoes the splits on the price and would read
+  a 4-for-1 as a 75% loss against an unchanged dividend. A test holds it.
+
+Cohort return against the benchmark is reported and **gates nothing** —
+equal-weighted buy-and-hold cohorts, no costs, no rebalancing, dividends
+collected and not reinvested. What it is good for is catching the opposite
+failure: a screen that avoids cuts by only ever naming companies going nowhere.
+
+### D4 result
+
+`pytest tests/value` — 449 passed, `ruff check .` clean. Dividend cache warmed
+across the whole store: of 1,066 names with 10-K facts, **725** have a dividend
+history and 341 have never paid one (AMZN, AMD, ANET and similar) — reported,
+not silently dropped. Cohorts 2012–2019 on a five-year forward window:
+
+```
+8 cohorts, 4099 name-dates, 5-year forward window, payout_max 0.60
+  2012-01-02 -> 2017-01-02  pass  95 (cut   15%)  reject  312 (cut   26%)
+  2013-01-02 -> 2018-01-02  pass 109 (cut   17%)  reject  365 (cut   33%)
+  2014-01-02 -> 2019-01-02  pass 102 (cut   10%)  reject  386 (cut   23%)
+  2015-01-02 -> 2020-01-02  pass 104 (cut   12%)  reject  415 (cut   22%)
+  2016-01-02 -> 2021-01-02  pass 104 (cut   19%)  reject  430 (cut   32%)
+  2017-01-02 -> 2022-01-02  pass  98 (cut   20%)  reject  449 (cut   31%)
+  2018-01-02 -> 2023-01-02  pass 100 (cut   14%)  reject  458 (cut   32%)
+  2019-01-02 -> 2024-01-02  pass 122 (cut   16%)  reject  450 (cut   34%)
+
+cut rate, reject arm less pass arm: +13.72% [+11.53%, +15.84%]
+VERDICT: pass against the pre-registered criterion
+
+  cohort return vs SPY, per holding window: +13.40% [+4.80%, +21.59%]
+
+payout_max sensitivity — a display, not evidence:
+  0.50:  715 passes, cut-rate gap +14.38% [+12.11%, +16.54%]
+  0.60:  834 passes, cut-rate gap +13.72% [+11.53%, +15.84%] <- configured
+  0.70:  898 passes, cut-rate gap +14.68% [+12.30%, +17.01%]
+```
+
+This is the module's first replay to pass its own pre-registered criterion —
+worth stating plainly beside 4b and 6, and worth reading narrowly. It says the
+screen separates future cutters from the rest. It does not say the screen beats
+SPY.
+
+An earlier run on a hand-picked 49 long-listed payers gave +8.22%
+[+2.97%, +13.04%]. The full universe did not deflate that, it sharpened it: when
+both arms are drawn from names that have paid for decades, the reject arm is also
+full of good companies and the gap is compressed. Choosing the sample by hand
+understated the effect. That is the opposite of the failure that was expected
+from it, and it is the reason the item was not left as a caveat.
+
+**On `VALUE_DIVIDEND_PAYOUT_MAX`.** Measured, and the answer is that it barely
+matters on this axis: 0.50, 0.60 and 0.70 give cut-rate gaps of +14.38%, +13.72%
+and +14.68%, three intervals overlapping almost entirely. What moves is the count
+— 715, 834, 898 passes. So the level is a breadth-versus-concentration
+preference, **not** a safety trade-off, and the seven names D3 flagged (PG, PEP,
+ABT, TGT, SYY, GPC, MCD) are not being excluded for cause. 0.70 shows the
+highest point estimate, which is exactly the cell the pre-registered criterion
+forbids reading a result from; the 0.96-point spread sits inside the noise.
+Default stays 0.60 because nothing here argues for moving it. An operator who
+wants a wider income list can set 0.70 knowing what it buys, which is what a
+measured knob is for.
+
+### Two defects the D4 runs exposed
+
+**The benchmark was measured on a different basis from the names.** The first
+priced run reported +25.99% excess against SPY. `total_return` reads its
+dividends from the `dividends` table, and an uncached name yields an empty list —
+at that layer indistinguishable from a name that paid nothing. SPY is an ETF with
+no 10-K facts, so no cache warmer ever reaches it: every name was measured with
+its dividends and the benchmark without. Correcting it moved the figure to
++13.40%, i.e. the overstatement was SPY's own yield compounded over five years.
+Fixed as a hard stop (`BenchmarkError`), not a caveat — a quietly price-only
+benchmark is precisely the confidently wrong figure the module's error rule
+exists to prevent.
+
+**The first cohort could not be priced at all.** It reported `unpriced 47` —
+every name in it. Cohort dates land on 2 January, a market holiday about as often
+as not, and a price frame fetched *from* the cohort date has no bar at or before
+it. Every name silently left the return figure and the run raised nothing. Fixed
+by fetching from `ENTRY_LOOKBACK_DAYS` before the first cohort; a test asserts a
+holiday entry date still prices.
+
+Both belong to the same family as the two D3 defects, and it is now four in a
+row: the wrong answer was never an exception, always a quietly emptier number.
+
 ## Still open
 
-- **`VALUE_DIVIDEND_PAYOUT_MAX` at 0.60 may be too tight.** In the live run it is
-  the criterion that rejects most names — PG, PEP, ABT, TGT, SYY, GPC, MCD all
-  fail on it and nothing else. That is defensible for a Buffett-style screen
-  (retained earnings compound; distributed ones do not) but a screen built to
-  find income may want 0.70. It is a knob, and nothing has measured it yet.
-- **No backtest.** D1 through D3 have never been replayed over history the way
-  phases 3 and 4b replayed the business screen. Until that exists, the criteria
-  levels are reasoned, not evidenced — and the module's own history says that is
-  the distinction that matters.
+- **Survivorship, and it is no longer hypothetical.** The corrected run reports
+  `unpriced 0` across all 4,099 name-dates — not one name lost its price series
+  over a decade. A real 2012 universe would have lost several per cent of its
+  members to delisting and acquisition, so their absence is a property of the
+  store, not of the market. Every number above is conditioned on surviving to
+  2026. Phase 4b step 2b established this hole is unrepairable on free data;
+  what is missing here is 4b's habit of *bounding* it with a stub sweep rather
+  than noting it.
+- **No costed simulation.** The return line is equal-weighted buy-and-hold
+  cohorts, and the mean of individual multi-year returns runs above a
+  cap-weighted index mechanically. Whether a real book of these names,
+  rebalanced and paying commission, beats SPY is the phase-4b question and is
+  still unanswered for the dividend screen.
+
+## D5 — the two things the operator's own brief asked for
+
+Stated after D4 shipped, and worth writing down because one of them is a
+requirement the module can serve and the other is a requirement no screen can:
+
+> a portfolio bought to pay cash for monthly living expenses; 5–10% yield is
+> fine; the whole portfolio must not lose more than 5%.
+
+### Yield, finally — on the candidate list
+
+Deferred since D1 for a real reason (the split-basis trap) and now cheap for an
+equally real one: **at the latest bar `AS_TRADED` equals `Close`**, because
+`AS_TRADED` is `Close` with *later* splits undone and today has none after it.
+So today's price over the dividend table's back-adjusted per-share figure is
+exact, and only today's is. `weekly.forward_yield` therefore prices at
+`date.today()` even when the run carries a past `--as-of`, and the column is
+labelled as today's rather than repaired.
+
+Ranking changes with it. The screen's order is clean-share, which answers how
+*durable* the payout is; a book that is spent from also needs how *much*, so
+yield decides the order. The whole pass list is priced in **one** `yf.download`
+(`history.last_closes`) rather than name by name, which is what makes ranking
+the whole list affordable. A name with no price reads `yield unknown`, never
+`0.00%`, and a dead feed becomes a note beside the breaks rather than an
+exception — the D3 rule, reused.
+
+**On the 5–10% target.** It is not reachable through this screen, and the
+conflict is structural rather than a matter of tuning: `PayoutRatio ≤ 0.60`
+excludes the entire class of securities that yields that much — REITs, BDCs,
+MLPs, high-payout utilities — because they pay out most of what they earn. What
+clears a decade of payments, no cut, payout inside earnings and free cash flow
+covering the cheque yields roughly 2–4%. The payout sweep in D4 already measured
+that loosening the limit to 0.70 buys breadth and not yield. The honest options
+are a lower income expectation on a screen that has evidence behind it, or a
+different screen for a different asset class; silently widening this one until
+the yield line looks right would be fitting the criteria to a wish.
+
+### Drawdown, because a screen cannot bound a loss
+
+"The whole portfolio must not lose more than 5%" cannot be delivered by choosing
+better payers. It is an allocation question, and answering it needs a measured
+number rather than a reassurance, so `backtest.book_drawdown` reports the worst
+peak-to-trough fall of an equal-weight book of the names that passed, held to
+the end of each forward window.
+
+**Price only, and this is the one place in the module where excluding dividends
+is the accurate choice.** The return line collects them because it asks what the
+names did. This line asks what the *account* did, and a book funded for living
+expenses has spent that cash by the time the fall arrives — it is not there to
+cushion it. Counting it would flatter precisely the number the floor is sized
+against.
+
+The report converts it once, with `sizing_for_floor`: the share of capital that
+would have kept the book inside the floor, the rest in something that does not
+fall. `--loss-floor` moves it. It is arithmetic on the worst window in the
+sample and is labelled as such — not a recommendation, and not a bound on the
+next fall, which can be deeper than anything measured here.
+
+### D5 result
+
+`pytest tests/value` — 469 passed (18 new), `ruff check .` clean. Both surfaces
+run against the warm store (726 cached histories, 1,066 with facts) on
+2026-08-25.
+
+**The drawdown, which is the answer to the 5% question.** Cohorts 2012–2019, the
+equal-weight book of everything that passed, held five years, price only:
+
+```
+  2012-01-02 -> 2017-01-02   -11.6%
+  2013-01-02 -> 2018-01-02   -11.4%
+  2014-01-02 -> 2019-01-02   -19.1%
+  2015-01-02 -> 2020-01-02   -19.0%
+  2016-01-02 -> 2021-01-02   -36.8%
+  2017-01-02 -> 2022-01-02   -37.2%
+  2018-01-02 -> 2023-01-02   -36.4%
+  2019-01-02 -> 2024-01-02   -37.8%
+
+worst across cohorts: -37.8%
+holding the whole portfolio inside 5% would have needed at most 13% of capital
+in these names, the rest in something that does not fall.
+```
+
+The split in that column is one event: every cohort whose window contains
+February 2020 falls about 37%, every earlier one about half that. So the honest
+reading is not "these names fall 12%" but "a decade with one crash in it prices
+the floor, and the sample contains exactly one". Thirteen per cent is the
+sizing that survived the worst month in the sample, not a bound on the next one.
+
+**The yield column, and a defect the first live run exposed.** The first version
+priced the top 25 candidates by clean-share and re-sorted those. It looked like
+cost control and was an alphabetical cut: over a hundred names tie at 100%
+clean, so the slice ran BR, CBSH, CDW, CSL, DGX, DPZ … and the message ranked
+ten names yielding 1.1–2.0% while calling itself a ranking by income. Every
+higher yielder later in the alphabet was scored `unknown`. Replaced with one
+batched download over the whole pass list:
+
+```
+CANDIDATES (153 pass, not held)
+  RHI  clean 95%, yield 5.23%      OMC  clean 98%, yield 3.26%
+  EMN  clean 92%, yield 4.58%      MKC  clean 92%, yield 3.26%
+  SWKS clean 95%, yield 4.22%      PB   clean 100%, yield 3.22%
+  HPQ  clean 100%, yield 4.08%     UBSI clean 92%, yield 3.12%
+  HBAN clean 98%, yield 3.64%      HRB  clean 90%, yield 2.96%
+```
+
+That is the fifth defect in this family and the same shape as the other four:
+never an exception, always a quietly emptier or quietly wronger number that
+renders as if it were the answer.
+
+It also sharpens the yield finding. The top of the list reaches 5.2%, not the
+2–4% the D5 note first assumed — a book of the ten highest yielders here would
+run about 3.6%. The 5–10% *portfolio average* remains out of reach for the
+structural reason above, but the gap is smaller than stated and the top of the
+list is worth reading before concluding anything about it.
+
+### 2008 is not measurable point-in-time, and what was measured instead
+
+The obvious next question after a -37.8% worst case is what 2008 did. It cannot
+be answered the way the rest of D4 is answered: the store's earliest EDGAR
+filing is **2009-10-27**, so a cohort standing on 2008-01-02 or 2009-01-02 sees
+no facts at all and screens **zero** names. Not thin — empty. The first workable
+cohort is 2011 (254 screenable, 54 pass), and 2012 is where D4 starts for that
+reason.
+
+So the GFC number was taken the only other way available, with the hindsight
+stated rather than hidden: the 153 names that pass the screen **today**, priced
+through the crash. 142 of them had a series back to 2007; the 11 that did not
+are post-crisis spinoffs and IPOs (CDW, MPC, XYL, HII, ALSN …) which simply did
+not exist, so the sample tilts old.
+
+```
+2007-10-01 -> 2009-03-31   -54.6%
+  floor  5%: at most  9% of capital     floor 20%: at most 37%
+  floor 10%: at most 18% of capital     floor 30%: at most 55%
+```
+
+The selection is hindsight, but it is worth being precise about which kind. The
+list is not conditioned on having survived 2008 *with the dividend intact* — the
+screen reads 2015–2024, so it contains banks (HBAN among them) that cut
+savagely in 2009 and rebuilt afterwards. What it is conditioned on is existing
+in 2026. That makes -54.6% a good deal closer to the real figure than a
+survivors-only replay would be.
+
+The practical consequence for the sizing line: the 5% floor implies 9–13% of
+capital in these names depending on which crash is taken as the reference, and
+the module has no basis for preferring one. Both are in the record; neither
+bounds the next one.
+
+Left as a scratch measurement rather than a flag on `backtest.py`. A
+`--include-2008` switch would put a hindsight-selected number inside the surface
+whose whole discipline is that the decision side is filtered as-of, and one
+labelled paragraph in a plan is cheaper than a footnote nobody reads on a
+command output.

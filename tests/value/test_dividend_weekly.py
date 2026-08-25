@@ -6,8 +6,9 @@ one that never had a dedupe table at all.
 """
 
 import unittest
+from datetime import date
 
-from tradingagents.value.dividend import ledger, store, weekly
+from tradingagents.value.dividend import history, ledger, runner, store, weekly
 from tradingagents.value.edgar.concepts import Fact
 from tradingagents.value.store import db
 
@@ -75,10 +76,28 @@ class WeeklyTest(unittest.TestCase):
             "fetcher": no_fetch,
             "refresh_limit": 0,
             "prices": lambda ticker, as_of: 120.0,
+            "closes": lambda tickers: dict.fromkeys(tickers, 120.0),
             "splits": lambda ticker, trades, as_of: trades,
             **kwargs,
         }
         return weekly.weekly(self.conn, AS_OF, **options), sender
+
+    # --- a dead price feed --------------------------------------------------
+
+    def test_a_dead_price_feed_becomes_a_note_and_leaves_the_breaks_standing(self):
+        cut = dict(rising())
+        cut[2020] = cut[2019] * 0.5
+        self.seed("KO", dps=cut)
+        self.buy("KO")
+        self.seed("PG")
+
+        def dead(tickers):
+            raise history.DividendError("price lookup failed: network is down")
+
+        text, _ = self.run_week(closes=dead)
+        self.assertIn("KO", text)
+        self.assertIn("candidate yields unavailable", text)
+        self.assertIn("yield unknown", text)
 
     # --- what is held -------------------------------------------------------
 
@@ -228,3 +247,98 @@ class WeeklyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+LAST_FULL_YEAR = date.today().year - 1
+
+
+class YieldTest(unittest.TestCase):
+    """What a candidate pays at today's price — the column a book bought for income needs.
+
+    The screen's own order is clean-share, which answers how durable the payout
+    is and not how much of it there is. Both questions matter to a book that is
+    spent from, and only one of them was on the message before this.
+    """
+
+    def setUp(self):
+        self.conn = store.connect(":memory:")
+        self.addCleanup(self.conn.close)
+
+    def seed(self, ticker: str, last_full: float) -> None:
+        store.upsert(
+            self.conn, ticker,
+            [(f"{LAST_FULL_YEAR}-06-15", last_full)],
+            "2026-01-01T00:00:00+00:00",
+        )
+
+    def test_the_yield_is_last_full_year_over_todays_price(self):
+        self.seed("PG", 4.00)
+        self.assertAlmostEqual(weekly.forward_yield(self.conn, "PG", 100.0), 0.04, places=6)
+
+    def test_a_name_with_no_cached_history_yields_unknown_not_zero(self):
+        # A 0.00% that actually means "no data" is the confidently wrong number
+        # the module refuses everywhere else.
+        self.assertIsNone(weekly.forward_yield(self.conn, "NEW", 100.0))
+
+    def test_a_name_with_no_price_yields_unknown_rather_than_a_number(self):
+        self.seed("PG", 4.00)
+        self.assertIsNone(weekly.forward_yield(self.conn, "PG", None))
+
+    def test_the_candidate_list_is_ranked_by_income(self):
+        self.seed("LOW", 2.00)
+        self.seed("HIGH", 6.00)
+        ranked, yields = weekly.rank_by_yield(
+            self.conn, [runner.Outcome("LOW"), runner.Outcome("HIGH")],
+            closes=lambda tickers: dict.fromkeys(tickers, 100.0),
+        )
+        self.assertEqual([o.ticker for o in ranked], ["HIGH", "LOW"])
+        self.assertAlmostEqual(yields["HIGH"], 0.06, places=6)
+
+    def test_an_unpriced_name_keeps_its_place_behind_the_priced_ones(self):
+        self.seed("PG", 2.00)
+        ranked, _ = weekly.rank_by_yield(
+            self.conn, [runner.Outcome("NOPRICE"), runner.Outcome("PG")],
+            closes=lambda tickers: {"PG": 100.0},
+        )
+        self.assertEqual([o.ticker for o in ranked], ["PG", "NOPRICE"])
+
+    def test_every_candidate_is_priced_in_one_request(self):
+        # The earlier version priced the top 25 by clean-share, which is an
+        # alphabetical cut once a hundred names tie at 100% clean. A ranking over
+        # a quarter of the list ranks nothing.
+        names = [f"T{index:02d}" for index in range(40)]
+        for ticker in names:
+            self.seed(ticker, 1.00)
+        calls = []
+
+        def closes(tickers):
+            calls.append(tuple(tickers))
+            return dict.fromkeys(tickers, 100.0)
+
+        _, yields = weekly.rank_by_yield(
+            self.conn, [runner.Outcome(t) for t in names], closes=closes
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls[0]), 40)
+        self.assertTrue(all(rate is not None for rate in yields.values()))
+
+    def test_a_dead_price_feed_raises_out_of_the_ranking(self):
+        def dead(tickers):
+            raise history.DividendError("price lookup failed")
+
+        with self.assertRaises(history.DividendError):
+            weekly.rank_by_yield(self.conn, [runner.Outcome("PG")], closes=dead)
+
+    def test_the_message_prints_the_yield_and_says_so_when_it_is_unknown(self):
+        from types import SimpleNamespace
+
+        fresh = [
+            SimpleNamespace(ticker="PG", result=SimpleNamespace(quality=0.95)),
+            SimpleNamespace(ticker="KO", result=SimpleNamespace(quality=0.90)),
+        ]
+        text = weekly.compose(
+            AS_OF, [], set(), fresh, set(), None, None, [],
+            {"PG": 0.035, "KO": None},
+        )
+        self.assertIn("PG: clean 95%, yield 3.50%", text)
+        self.assertIn("KO: clean 90%, yield unknown", text)

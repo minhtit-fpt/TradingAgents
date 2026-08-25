@@ -135,6 +135,66 @@ def candidates(
     return passes, skipped
 
 
+def forward_yield(
+    conn: sqlite3.Connection, ticker: str, price: float | None
+) -> float | None:
+    """Last full year's dividend per share over **today's** price, or ``None``.
+
+    Today's price specifically, even when the screen runs with a past ``--as-of``.
+    The ``dividends`` table is back-adjusted to the present, and only at the
+    latest bar does every price basis coincide with it; before an intervening
+    split the two sit on different bases and their ratio is a split factor, not a
+    yield (``store.py``, the DDL note). Labelling the column as today's is
+    cheaper than a basis repair and cannot be silently wrong.
+
+    A rate, not a forecast: what the last twelve months would pay at this price,
+    and the board can change it. ``None`` means unknown and renders as such -- a
+    0.00% yield that actually means "no data" is the confidently wrong number
+    this module refuses everywhere else.
+    """
+    dps = book.annual_dps(conn, ticker, date.today().isoformat())
+    if dps is None or price is None or price <= 0:
+        return None
+    return dps / price
+
+
+def rank_by_yield(
+    conn: sqlite3.Connection,
+    passes: list[runner.Outcome],
+    *,
+    closes=history.last_closes,
+) -> tuple[list[runner.Outcome], dict[str, float | None]]:
+    """Re-sort the pass list by income, and say what each name yields.
+
+    The screen's own order is clean-share, which answers "how durable" and not
+    "how much". A book bought to be spent from is asking the second question, so
+    it decides the order.
+
+    The whole list is priced in **one** download rather than a slice of it name
+    by name. An earlier version priced the first 25 by clean-share, which sounded
+    like a cost control and was in fact an alphabetical cut: over a hundred names
+    tie at 100% clean, so the slice ran BR, CBSH, CDW, CSL … and every high
+    yielder later in the alphabet was ranked as unknown. A ranking over a
+    quarter of the list is not a ranking.
+
+    Names with no price keep their clean-share order behind the priced ones
+    rather than being dropped.
+    """
+    prices = closes([outcome.ticker for outcome in passes])
+    yields = {
+        outcome.ticker: forward_yield(conn, outcome.ticker, prices.get(outcome.ticker))
+        for outcome in passes
+    }
+    ranked = sorted(
+        passes,
+        key=lambda outcome: (
+            yields[outcome.ticker] if yields[outcome.ticker] is not None else -1.0
+        ),
+        reverse=True,
+    )
+    return ranked, yields
+
+
 def compose(
     as_of: str,
     broken: list[Break],
@@ -144,6 +204,7 @@ def compose(
     the_book: book.Book | None,
     irr: float | None,
     notes: list[str],
+    yields: dict[str, float | None] | None = None,
 ) -> str:
     """The whole week in one message. Breaks first because they are read first."""
     lines = [f"dividend weekly — {as_of}"]
@@ -162,10 +223,15 @@ def compose(
     lines.append("")
     if fresh:
         shown = fresh[:10]
+        rates = yields or {}
         lines.append(f"CANDIDATES ({len(fresh)} pass, not held)")
         for outcome in shown:
             mark = " NEW" if outcome.ticker in new_names else ""
-            lines.append(f"  {outcome.ticker}{mark}: clean {outcome.result.quality:.0%}")
+            rate = rates.get(outcome.ticker)
+            income = f"yield {rate:.2%}" if rate is not None else "yield unknown"
+            lines.append(
+                f"  {outcome.ticker}{mark}: clean {outcome.result.quality:.0%}, {income}"
+            )
         if len(fresh) > len(shown):
             lines.append(f"  … and {len(fresh) - len(shown)} more")
     else:
@@ -233,6 +299,7 @@ def weekly(
     prices=None,
     splits=None,
     fetcher=history.fetch,
+    closes=history.last_closes,
 ) -> str:
     """One full pass. Returns the message, which is always composed and always sent."""
     notes: list[str] = []
@@ -247,6 +314,13 @@ def weekly(
     broken, unknown = breaks(conn, positions, as_of, years=years)
     notes.extend(unknown)
     fresh, skipped = candidates(conn, as_of, set(positions), years=years)
+    yields: dict[str, float | None] = {}
+    try:
+        fresh, yields = rank_by_yield(conn, fresh, closes=closes)
+    except history.DividendError as exc:
+        # A dead price feed degrades to a note, exactly as the book does below:
+        # the breaks are the part worth waking up for and they need no price.
+        notes.append(f"candidate yields unavailable: {exc}")
     if skipped:
         notes.append(f"{skipped} name(s) skipped: no dividend history cached yet")
 
@@ -268,7 +342,9 @@ def weekly(
     except Exception as exc:  # a dead price feed must not suppress the breaks
         notes.append(f"book not valued: {type(exc).__name__}: {exc}")
 
-    text = compose(as_of, broken, new_breaks, fresh, new_names, the_book, irr, notes)
+    text = compose(
+        as_of, broken, new_breaks, fresh, new_names, the_book, irr, notes, yields
+    )
     if sender(text) and record:
         for ticker in new_breaks:
             signature = next(b.signature for b in broken if b.ticker == ticker)
