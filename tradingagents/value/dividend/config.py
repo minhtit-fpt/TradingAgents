@@ -33,3 +33,29 @@ CUT_TOLERANCE = _env_nonneg_int("VALUE_DIVIDEND_CUT_TOLERANCE", 0)
 # screen's and a separate knob all the same: retuning what counts as a durable
 # margin must not silently retune what counts as a safe payout.
 VIOLATION_TOLERANCE = _env_nonneg_int("VALUE_DIVIDEND_VIOLATION_TOLERANCE", 2)
+
+# --- D5, the price-stability rank -------------------------------------------
+
+# Trailing window the price properties are measured over. Ten years on purpose:
+# it reaches back through March 2020, and a window with no crash in it scores
+# every name as calm.
+STABILITY_YEARS = _env_int("VALUE_DIVIDEND_STABILITY_YEARS", 10)
+
+# Annualised standard deviation of daily returns. Above this the name moves too
+# much for a book whose stated job is not to move.
+MAX_VOLATILITY = _env_float("VALUE_DIVIDEND_MAX_VOLATILITY", 0.28)
+
+# Worst peak-to-trough fall tolerated, as a magnitude. Price only -- income
+# spent as it arrives is not in the account to cushion the fall.
+MAX_DRAWDOWN = _env_float("VALUE_DIVIDEND_MAX_DRAWDOWN", 0.40)
+
+# How many names the proposed basket holds. Equal weight, and a count rather
+# than a weighting scheme: the module has no basis for preferring one name over
+# another once both cleared the same limits.
+BASKET_SIZE = _env_int("VALUE_DIVIDEND_BASKET_SIZE", 15)
+
+# Forward yield a name must pay to be in the basket. The screen already proves
+# the dividend is durable; this is the operator's income requirement, which no
+# amount of durability substitutes for -- ranking by return alone returned a
+# 1.32% basket of durable payers on the first live run.
+MIN_YIELD = _env_float("VALUE_DIVIDEND_MIN_YIELD", 0.02)

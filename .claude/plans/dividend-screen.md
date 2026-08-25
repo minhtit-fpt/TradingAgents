@@ -717,3 +717,134 @@ Left as a scratch measurement rather than a flag on `backtest.py`. A
 whose whole discipline is that the decision side is filtered as-of, and one
 labelled paragraph in a plan is cheaper than a footnote nobody reads on a
 command output.
+
+## D5 — the price-stability rank
+
+Deliverable: `dividend/stability.py`. Tests: `tests/value/test_dividend_stability.py`.
+
+The requirement, in the operator's words: a book of names that pay cash
+dividends regularly, whose price does not move much, does not fall much, and
+rises if it can.
+
+D1 answers only the first clause. It reads the payout and nothing else, and D4
+measured what that omission costs — an equal-weight book of the whole pass list
+fell 37.8% through 2020 and 54.6% through 2008. So D5 scores the three price
+properties the screen never looked at, over the names it has already passed.
+
+### Three limits and one rank
+
+```
+filter   forward yield              >= min_yield        (2%)
+filter   annualised volatility      <= max_volatility   (28%)
+filter   worst peak-to-trough fall  <= max_drawdown     (40%)
+rank     annualised price return, highest first
+```
+
+Limits on the three requirements and a plain rank on the bonus, rather than one
+weighted score. A score needs weights nobody here can defend, and it hides which
+constraint bound — which is the only part of an empty answer worth reading.
+
+The yield floor is not decoration, and the first live run is why it exists.
+Ranking by return with no floor, the module returned MSFT, MSI, V, WMT and NDAQ
+at the top and a basket yielding **1.32%**: durable payers every one, and an
+income book by no definition at all. "If it rises, that's good" is a tie-break
+among names that already pay, not a reason to hold one that barely does.
+
+A name whose yield could not be priced is cut by the floor rather than passed by
+it — an unpriced name is not a name that pays enough, it is a name nobody
+measured. Yields are therefore computed for the whole scored set *before* the
+cut, not for the survivors after it: filtering on a column that does not exist
+yet is the slice-and-call-it-a-ranking defect D3 already paid for once.
+
+**Price only, dividends excluded.** `auto_adjust=False`, so `Close` is
+split-adjusted and dividend-unadjusted — the basis `backtest.book_drawdown`
+already uses, for the reason it documents: income spent as it arrives is not in
+the account to cushion a fall.
+
+**Ten years, not five.** A trailing five-year window on 2026-08 starts in 2021
+and contains no crash, which scores every name as calm. Ten reaches back through
+March 2020.
+
+**The book is measured as one path**, not as the average of its names' falls.
+Names do not all bottom on the same day, so the average of the parts is always
+worse than the whole and would reject baskets that were fine. A test pins this
+with two names that crash 50% at opposite ends of the window: each reads −50%,
+the book reads −25%.
+
+**Names that did not live through the whole window are dropped, not scored.** A
+series starting after the crash has a shallow drawdown for a reason that has
+nothing to do with the company, and scoring it would put exactly the wrong names
+at the top.
+
+### D5 result
+
+`pytest tests/value` — 485 passed (16 new), `ruff check .` clean. Run against
+the D4 store copy (726 names with cached dividend history, 153 passing D1) over
+2016-08-25 → 2026-08-25:
+
+| min yield | pass yield | too volatile | fell too far | basket |
+|---|---|---|---|---|
+| none | 153 | 101 | 33 | 15 names (the `--size` cap), **1.32%** yield, 16.3% vol, −30.2% worst, 14.6%/yr |
+| 2% | 35 | 25 | 7 | 3 names (HD, ITW, LMT), **2.43%** yield, 19.4% vol, −35.8% worst, 9.1%/yr |
+| 3% | 9 | 8 | 1 | **empty** |
+| 4% | 4 | 4 | 0 | **empty** |
+
+Four findings. The first is the one that decides whether the feature can do
+what was asked of it; the second is the one most likely to be got wrong by
+anyone tuning the knobs afterwards.
+
+**Yield and price stability are anti-correlated across this universe.** Only 9
+of the 153 durable payers yield 3% or more, and 8 of those 9 are too volatile to
+hold under a 28% limit; at 4% it is 4 of 4. The names that pay well here are
+banks, chemicals and hardware — the cyclicals whose price moves are the reason
+they yield well. There is no corner of this list where the operator's income
+target and their stability target are both met. That is a property of the
+universe, not a tuning problem, and no combination of the four knobs finds one.
+
+So the 5–10% portfolio yield remains out of reach for the same structural reason
+D4 recorded, now with the mechanism named rather than inferred.
+
+**Drawdown is the binding knob; volatility only looks like it.** By raw counts
+the volatility filter cuts far more names than the drawdown filter — 25 against 7
+at a 2% yield floor — which reads as though loosening it would open the list.
+It does not. A second sweep at a 1.5% floor, holding everything else fixed:
+
+| min yield | max vol | max drawdown | too volatile | fell too far | basket |
+|---|---|---|---|---|---|
+| 1.5% | 28% | 40% | 35 | 13 | 7 names, 2.00% yield, 17.3% vol, −33.8% worst, 10.5%/yr |
+| 1.5% | **32%** | 40% | 18 | 30 | **the same 7 names**, identical basket |
+| 1.5% | 28% | **45%** | 35 | 6 | 14 names, 1.92% yield, 17.6% vol, −34.3% worst, 11.3%/yr |
+| 1.5% | **32%** | **45%** | 18 | 19 | 15 names (the `--size` cap, not the end of the list) |
+
+Row 2 is the finding. Raising the volatility ceiling by four points moved 17
+names out of one rejection column and straight into the other, and admitted
+nobody: high volatility and deep drawdown are one property of one group of
+names here, not two properties that can be traded against each other. Raising
+the drawdown ceiling by five points doubled the basket instead.
+
+So the earlier reading of the count — that volatility "does all the work" —
+was backwards about which knob to turn. The count says which filter fires last,
+not which one binds.
+
+**The book absorbs falls the names do not.** In the 14-name basket NSC fell
+44.7%, AVY 43.8% and CBSH 43.5% on their own, and the book fell 34.3% — half a
+point deeper than the 7-name basket that excluded all three. Names admitted by a
+looser drawdown limit did not deepen the book's own drawdown, because they did
+not bottom on the same day. This is the reason the book is measured as one path
+(above) rather than as an average of its names, stated in numbers.
+
+**None of it moves the 5% constraint.** Every row of both tables lands on 14–17%
+of capital, the same range D4 arrived at from cohorts rather than from a single
+window. The knobs trade names against income against return; the share of
+capital that would have held the whole portfolio inside 5% is not among the
+things they change. Arithmetic on one past window, not a bound on the next one.
+
+### What D5 does not do
+
+- **No weights.** Equal weight and a count. Once two names clear the same
+  limits, this module has no basis for preferring one, and inventing one would
+  be the weighted score the design just rejected.
+- **No position.** Same rule as every other surface: it names candidates and
+  writes nothing.
+- **No forward test.** Selection is on a past window, and the window contains
+  exactly one crash. A filter tuned on one crash is tuned on one crash.
