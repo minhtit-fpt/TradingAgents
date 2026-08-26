@@ -245,6 +245,17 @@ class IndependenceTest(unittest.TestCase):
         # list: nothing in ``backtest/`` learns that this package exists.
         "tradingagents.value.backtest.prices",
         "tradingagents.value.backtest.stats",
+        # D7 only, and the one place this package spends money. The tier-3 read
+        # is reused whole rather than rebuilt: the same prompt cache, the same
+        # budget that fails closed, the same ``briefing`` render that puts the
+        # verdict last. A second analyst would be a second set of phase 6's
+        # mistakes to make, and a second prompt prefix to pay for.
+        "tradingagents.value.analyst.value_analyst",
+        "tradingagents.value.analyst.schemas",
+        "tradingagents.value.edgar.filings",
+        "tradingagents.value.edgar.client",
+        "tradingagents.value.llm.budget",
+        "tradingagents.value.alerts.message",
     }
 
     def setUp(self):

@@ -61,6 +61,41 @@ _XREF_AFTER_RE = re.compile(
 )
 _QUOTE_OPENERS = ('"', "'", "“", "‘")
 
+# The third form, and the one that survived the first two. Neither punctuation
+# test fires when a filer writes the citation as plain prose:
+#
+#   LMT  ...notes thereto included in Item 8 - Financial Statements…
+#   LMT  For additional information…, see Item 1A - Risk Factors…
+#   HD   ...consolidated financial statements and related notes and Part II, Item 7.
+#   ITW  Refer to Item 7. Management's Discussion and Analysis…
+#   JNJ  …incorporated herein by reference to the material under the captions Item 1.
+#
+# Every one of those is followed by a dash or a full stop — exactly what a real
+# heading looks like — so what separates them sits *before* the number. A heading
+# follows the end of something: a full stop, a page number, "Table of Contents".
+# A prose citation follows the preposition or verb that governs it.
+#
+# Matched at the end of a bounded lookback rather than by enumerating headings,
+# because the default has to stay "this opens a section". An opener wrongly
+# dropped truncates the section before it, which is the failure the after-rule's
+# comment above warns about, and it is the more expensive of the two.
+_XREF_BEFORE_RE = re.compile(
+    r"""(?:\b(?:see|refer(?:s|red|ring)?\s+to|described\s+in|set\s+forth\s+in
+        |included\s+in|contained\s+in|discussed\s+in|incorporated\s+(?:by\s+reference\s+)?in
+        # JNJ's Part III points at the proxy this way, and the word that governs
+        # the number is the noun rather than the preposition before it.
+        |caption(?:s)?|heading(?:s)?|entitled
+        |in|into|under|within|to|from|with|of|and|or|per|through|by|and\s+in)
+        \s*[:;,]?\s*                                     # "under: Item 7."
+        (?:part\s+[ivx]+\s*[,.]?\s*)?)$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# "Refer to Note 3. Divestitures in Item 8." — the governing verb is five words
+# back, not one. Long enough to reach it and the "Part II," that may sit between,
+# short enough that slicing it per marker does not copy the filing.
+_LOOKBACK_CHARS = 48
+
 
 def _is_citation(text: str, start: int, end: int) -> bool:
     """Does this ``Item N`` cite a section rather than open one?"""
@@ -69,8 +104,10 @@ def _is_citation(text: str, start: int, end: int) -> bool:
     # Bounded lookback: text is whitespace-collapsed, so the quote is the
     # character before the marker or nothing is. Slicing the whole prefix here
     # would copy the filing once per marker.
-    before = text[max(0, start - 4):start].rstrip()
-    return bool(before) and before[-1] in _QUOTE_OPENERS
+    before = text[max(0, start - _LOOKBACK_CHARS):start].rstrip()
+    if not before:
+        return False
+    return before[-1] in _QUOTE_OPENERS or bool(_XREF_BEFORE_RE.search(before))
 
 # A section shorter than this is a cross-reference or a stray heading match, not
 # a body. Item 1A alone runs to tens of thousands of characters in any real 10-K.

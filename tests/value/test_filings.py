@@ -169,6 +169,136 @@ class SelfCitationTest(unittest.TestCase):
         self.assertIn("industrial fasteners", sections.business)
 
 
+class ProseCitationTest(unittest.TestCase):
+    """The third citation form: plain prose, punctuated exactly like a heading.
+
+    Every sentence below is verbatim from the three 10-Ks the first live dividend
+    briefing read on 2026-08-25, and all three filings came back damaged. The
+    punctuation rules could not see any of them — each citation is followed by a
+    dash or a full stop, which is what a real heading looks like. What separates
+    them sits before the number: a heading follows the end of something, a
+    citation follows the word that governs it.
+
+    Damage, for the record: LMT's MD&A closed after 437 characters and was
+    dropped entirely, so the analyst read no Item 7 at all; HD's Risk Factors
+    span held MD&A text; ITW's MD&A both opened late and closed early.
+    """
+
+    def _extract(self, body: str):
+        return filings.extract(filings.to_text(f"<html><body>{body}</body></html>"))
+
+    def test_a_citation_governed_by_in_does_not_close_the_section_it_sits_in(self):
+        # LMT: the MD&A's own opening sentence points at Item 8, and closing
+        # there left 437 characters — under the floor, so Item 7 vanished.
+        sections = self._extract(
+            f"<p>Item 1. Business</p><p>{BODY_1}</p>"
+            f"<p>Item 1A. Risk Factors</p><p>{BODY_1A}</p>"
+            f"<p>Item 7. Management&rsquo;s Discussion and Analysis</p>"
+            f"<p>This should be read in conjunction with, our consolidated financial "
+            f"statements and notes thereto included in Item 8 - Financial Statements "
+            f"and Supplementary Data. {BODY_7}</p>"
+            f"<p>Item 8. Financial Statements</p><p>See F-1.</p>"
+        )
+
+        self.assertIn("Net sales rose", sections.mdna)
+
+    def test_a_citation_governed_by_see_does_not_close_the_section_it_sits_in(self):
+        # LMT again, inside Item 1: "see Item 1A - Risk Factors" cut Business to
+        # 4,384 characters against 88,265 for the largest section.
+        sections = self._extract(
+            f"<p>Item 1. Business</p>"
+            f"<p>For additional information on the F-35 program, see Item 1A - Risk "
+            f"Factors for a discussion of risks. {BODY_1}</p>"
+            f"<p>Item 1A. Risk Factors</p><p>{BODY_1A}</p>"
+            f"<p>Item 7. Management&rsquo;s Discussion and Analysis</p><p>{BODY_7}</p>"
+            f"<p>Item 8. Financial Statements</p><p>See F-1.</p>"
+        )
+
+        self.assertIn("industrial fasteners", sections.business)
+        self.assertNotIn("industrial fasteners", sections.risk_factors)
+
+    def test_a_citation_governed_by_refer_to_does_not_open_a_section(self):
+        # ITW: "Refer to Item 7. Management's Discussion" sat inside Item 1 and
+        # opened a span that won on length against the real MD&A.
+        sections = self._extract(
+            f"<p>Item 1. Business</p>"
+            f"<p>Current Year Developments Refer to Item 7. Management&rsquo;s "
+            f"Discussion and Analysis for more. {BODY_1}</p>"
+            f"<p>Item 1A. Risk Factors</p><p>{BODY_1A}</p>"
+            f"<p>Item 7. Management&rsquo;s Discussion and Analysis</p><p>{BODY_7}</p>"
+            f"<p>Item 8. Financial Statements</p><p>See F-1.</p>"
+        )
+
+        self.assertIn("Net sales rose", sections.mdna)
+        self.assertNotIn("industrial fasteners", sections.mdna)
+
+    def test_a_part_reference_between_the_verb_and_the_number_is_still_a_citation(self):
+        # HD: "...related notes and Part II, Item 7." — the governing word is two
+        # tokens back, with a Part reference wedged between it and the number.
+        sections = self._extract(
+            f"<p>Item 1. Business</p>"
+            f"<p>Read this with our consolidated financial statements and related "
+            f"notes and Part II, Item 7. Management&rsquo;s Discussion and Analysis. "
+            f"{BODY_1}</p>"
+            f"<p>Item 1A. Risk Factors</p><p>{BODY_1A}</p>"
+            f"<p>Item 7. Management&rsquo;s Discussion and Analysis</p><p>{BODY_7}</p>"
+            f"<p>Item 8. Financial Statements</p><p>See F-1.</p>"
+        )
+
+        self.assertIn("Net sales rose", sections.mdna)
+        self.assertNotIn("industrial fasteners", sections.mdna)
+
+    def test_the_governing_word_is_found_past_an_intervening_note_reference(self):
+        # ITW: "Refer to Note 3. Divestitures in Item 8." — five words from the
+        # verb to the number, which is what sets the lookback window.
+        sections = self._extract(
+            f"<p>Item 1. Business</p><p>{BODY_1}</p>"
+            f"<p>Item 1A. Risk Factors</p><p>{BODY_1A}</p>"
+            f"<p>Item 7. Management&rsquo;s Discussion and Analysis</p>"
+            f"<p>Refer to Note 3. Divestitures in Item 8. Financial Statements and "
+            f"Supplementary Data for further information. {BODY_7}</p>"
+            f"<p>Item 8. Financial Statements</p><p>See F-1.</p>"
+        )
+
+        self.assertIn("Net sales rose", sections.mdna)
+
+    def test_a_caption_reference_does_not_open_a_section(self):
+        # JNJ's Part III incorporates the proxy by reference, and there the word
+        # governing the number is the noun — "under the captions Item 1." — not
+        # the preposition. Five such references sat past character 500,000 and
+        # one of them won Item 1 on length against the real Business section.
+        sections = self._extract(
+            f"<p>Item 1. Business</p><p>{BODY_1}</p>"
+            f"<p>Item 1A. Risk Factors</p><p>{BODY_1A}</p>"
+            f"<p>Item 7. Management&rsquo;s Discussion and Analysis</p><p>{BODY_7}</p>"
+            f"<p>Item 8. Financial Statements</p><p>See F-1.</p>"
+            f"<p>Item 10. Directors</p><p>The information called for by this item is "
+            f"incorporated herein by reference to the material under the captions "
+            f"Item 1. Election of Directors and, if applicable, Delinquent Section "
+            f"16(a) reporting in the Proxy Statement. {BODY_1A}</p>"
+        )
+
+        self.assertIn("industrial fasteners", sections.business)
+        self.assertNotIn("Election of Directors", sections.business)
+
+    def test_a_heading_after_a_page_number_still_opens_its_section(self):
+        # The cost of getting this wrong is a truncated section, so the openers
+        # have to survive. ITW's real Item 1A follows a bare page number; LMT's
+        # real Item 7 follows "Table of Contents"; HD's follows a full stop.
+        sections = self._extract(
+            f"<p>Item 1. Business</p><p>{BODY_1} 9</p>"
+            f"<p>ITEM 1A. Risk Factors</p><p>{BODY_1A}</p>"
+            f"<p>ITEM 6. [Reserved] 28 Table of Contents</p>"
+            f"<p>ITEM 7. Management&rsquo;s Discussion and Analysis</p><p>{BODY_7}</p>"
+            f"<p>Item 8. Financial Statements</p><p>See F-1.</p>"
+        )
+
+        self.assertIn("construction downturn", sections.risk_factors)
+        self.assertIn("Net sales rose", sections.mdna)
+        self.assertEqual(sections.missing, ())
+        self.assertEqual(sections.suspect, ())
+
+
 class FetchTest(unittest.TestCase):
     def test_picks_the_latest_10k_filed_on_or_before_the_as_of_date(self):
         client = _FakeClient(

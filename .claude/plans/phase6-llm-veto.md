@@ -260,3 +260,71 @@ MD&A" into `evidence_gaps`, and that only surfaced because phase 8 had just
 promoted that field. A cheap standing assertion on `sections_for` — that a span
 opens at a heading, and that its length is within an order of magnitude of its
 siblings — would have caught it on any run. It is not built.
+
+## The extractor, third round — 2026-08-26
+
+The standing problem above closes one notch further, and the instrumentation the
+last paragraph asked for is what closed it.
+
+`_geometry_faults` was built after phase 6 and fires on `sections_for`. On
+2026-08-26 the dividend module's first LLM briefing (D7) read three filings and
+**all three came back flagged**: LMT with no Item 7 at all, HD with MD&A text in
+the `risk_factors` span, ITW with MD&A opening late and closing early. Nobody had
+to read one line to notice — the check said so on the run, which is exactly what
+the previous entry said was missing.
+
+### A third citation form the punctuation rules cannot see
+
+Phase 6's fix separated headings from citations by punctuation: a comma after the
+number (DECK) or an opening quote before it (KO). Neither fires on a citation
+written as plain prose, because those are punctuated exactly like a heading:
+
+| filing | text | after the number |
+|---|---|---|
+| LMT | "...notes thereto included **in** Item 8 - Financial Statements" | dash |
+| LMT | "For additional information..., **see** Item 1A - Risk Factors" | dash |
+| HD | "...related notes **and Part II,** Item 7. Management's Discussion" | full stop |
+| ITW | "**Refer to** Item 7. Management's Discussion and Analysis" | full stop |
+| JNJ | "...under the **captions** Item 1. Election of Directors" | full stop |
+
+What separates them sits *before* the number. A heading follows the end of
+something — a full stop, a page number, "Table of Contents". A prose citation
+follows the word that governs it. So `_is_citation` gained `_XREF_BEFORE_RE`, a
+bounded 48-character lookback matching a governing preposition, verb or noun,
+optionally with a `Part II,` wedged between it and the number.
+
+Matched by cue word rather than by enumerating what a heading looks like, because
+the default must stay "this opens a section": an opener wrongly dropped truncates
+the section before it, which is the more expensive of the two errors and the one
+phase 6's own comment warns about.
+
+### Measured over 18 filings, old extractor against new
+
+Same 18 cached 10-Ks, both code paths, faults counted as `missing + suspect`:
+
+```
+filings with any fault:   old 12/18   new 0/18
+```
+
+Zero regressions — no filing that was clean became faulty. Three had lost a
+section outright and got it back (LMT, MMM, PEP: `mdna` 0 characters -> 48,000).
+Six more had MD&A truncated to between 9,813 and 44,963 characters and now reach
+the budget. HD's `mdna` got *shorter*, 37,251 -> 31,356, because the old span was
+holding text that was never MD&A.
+
+Seven new tests in `test_filings.py`, each carrying the verbatim sentence from
+the filing it came from.
+
+### What this does not change
+
+- **The phase 6 verdict stands.** Tier 3 does not earn its cost as a gate; that
+  rested on the `avoid` column being empty, not on which text was read. This
+  round was not re-measured against the 44 events, and no claim here needs it to
+  have been.
+- **The 70% `caution` share is now unverified in either direction.** It was
+  measured on the previous extractor. Whether better text spreads the verdicts is
+  an open question and a paid one; `alerts.message.briefing` still prints the 70%
+  because that is the last figure actually measured.
+- **Nothing proves the forms are exhausted.** Four are handled because four were
+  observed. A fifth filer will write a fifth form, and `_geometry_faults` is
+  still the thing that will say so.

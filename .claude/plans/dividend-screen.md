@@ -846,5 +846,235 @@ things they change. Arithmetic on one past window, not a bound on the next one.
   be the weighted score the design just rejected.
 - **No position.** Same rule as every other surface: it names candidates and
   writes nothing.
-- **No forward test.** Selection is on a past window, and the window contains
-  exactly one crash. A filter tuned on one crash is tuned on one crash.
+- **No forward test of its own.** Selection is on a past window, and the window
+  contains exactly one crash. D6 below replays the two price limits forward
+  against a random-selection baseline; until that existed, this bullet read as a
+  standing objection rather than a pointer.
+
+
+## D6 — the forward test of the price filters
+
+Deliverable: `dividend/forward.py`. Tests: `tests/value/test_dividend_forward.py`.
+
+D5 selects names whose price sat still over a trailing window, which is a
+description of what already happened. D4 is the precedent for what a description
+is worth before it is replayed: the dividend criteria were reasoned too, and
+reasoning is what phases 4b and 6 each established is not evidence.
+
+```bash
+python -m tradingagents.value.dividend.forward --start 2012 --end 2020
+```
+
+### The question, and why the baseline is random selection
+
+    a book chosen on trailing volatility and drawdown as of date X — does it
+    fall less over the next five years than a book of the same size drawn at
+    random from the same pass list?
+
+**Random selection, not the whole pass list.** Picking 15 names out of 100
+changes a drawdown all by itself, in either direction, and a filter measured
+against the 100-name book would be credited with an effect that concentration
+produced. Phase 6 had to add its noise floor as a separate measurement after the
+fact; here it is the baseline from the first line.
+
+**The yield floor is held off.** It is a requirement the operator states, not a
+claim about the future. Mixing it in would shrink both arms to test something
+nobody asserted. On trial are the two price limits and nothing else.
+
+Pre-registered, printed verbatim above every run, and reproduced in
+`forward.CRITERION`:
+
+> the price filters earn their place only if the 95% cluster-bootstrap CI for
+> (filtered book's forward max drawdown − the median forward max drawdown of
+> random books of the same size on the same date), pooled over cohort dates, is
+> entirely above zero, at the configured limits, never at a best-of-grid cell.
+> Forward return is descriptive and gates nothing.
+
+The bootstrap resamples whole cohort dates rather than names, for the reason
+`backtest.interval` documents: two names screened on the same morning share a
+market.
+
+### The point-in-time line, which is the whole risk
+
+`trailing()` reads a price frame that also spans the forward window — it has to,
+the same cache prices the outcome — so the slice at the cohort date is the only
+thing standing between the decision and the answer. It is pinned by a pair:
+a name that falls 60% *after* the cohort date must measure a drawdown of exactly
+zero, and the control reads the same frame at a later as-of and finds the −60%.
+A leak here would not fail, it would flatter.
+
+The first draft of that test placed the crash by counting business days and put
+it seven bars on the wrong side of the cohort date. The fixture now places
+events by date.
+
+### D6 result
+
+`pytest tests/value` — 504 passed (19 new), `ruff check .` clean. Cohorts
+2012–2020, five-year horizon, 200 random books per date, against the D4 store
+copy:
+
+```
+from        to            pool  filtered   random   effect      all
+2012-01-02  2017-01-02      95    -11.0%   -15.2%    +4.2%   -11.6%
+2013-01-02  2018-01-02     109     -9.2%   -14.5%    +5.3%   -11.4%
+2014-01-02  2019-01-02     102    -11.9%   -19.9%    +8.0%   -19.1%
+2015-01-02  2020-01-02     103    -12.3%   -19.3%    +7.1%   -19.0%
+2016-01-02  2021-01-02     102    -24.8%   -37.5%   +12.6%   -36.8%
+2017-01-02  2022-01-02      95    -24.8%   -37.7%   +12.9%   -37.2%
+2018-01-02  2023-01-02      98    -27.9%   -37.2%    +9.3%   -36.4%
+2019-01-02  2024-01-02     122    -35.8%   -38.2%    +2.3%   -37.8%
+2020-01-02  2025-01-02     135    -34.9%   -38.9%    +4.0%   -38.6%
+```
+
+**VERDICT: the price filters earn their place.** Effect +7.30%, CI
+[+5.16%, +9.66%], positive on all nine dates. Trailing calm predicts forward
+calm, and not by concentration — the baseline already holds fifteen names.
+
+This is the first pass any gate in this module has returned, and it was
+predicted to fail. The prediction is recorded because it is the only evidence
+that the criterion was not reverse-engineered from the number: the reasoning was
+that March 2020 took 30–40% off almost everything, so forward drawdown would be
+dominated by whether the window contained a crash rather than by which names
+were held. That reasoning was wrong about the magnitude of what the filter
+avoids, and right about where it stops working — see the second caveat.
+
+Four things the verdict does not say, none of them cancelled by the pass.
+
+**It is bought with return.** The filtered book trails the random one by −6.3%
+over the five-year window, about −1.2% a year. Same shape phase 6 recorded about
+every intervention that has helped this strategy: they help by holding less
+risk, not by picking better. Here it is falling less and earning less.
+
+**The effect shrinks exactly where it is wanted most.** The 2019 and 2020
+cohorts — entering shortly before February 2020 — return +2.3% and +4.0%,
+against +12.9% for the 2017 cohort. When the crash arrives early in the holding
+period the filter barely helps, and the filtered book still fell 35.8%. A
+selection made on calm cannot outrun a market-wide repricing it enters into.
+
+**Nine cohorts are not nine experiments.** Five-year windows stepped one year
+apart mean the 2016 and 2017 cohorts share four years. The cluster bootstrap
+resamples whole dates but cannot undo that overlap, so the interval is narrower
+than the number of independent observations would support. D4 carries the same
+property and the same caveat.
+
+**This is almost certainly the low-volatility anomaly**, which has a long
+published literature on equity markets. Recovering it is evidence the apparatus
+is not broken, not evidence of an edge peculiar to this screen. It also does
+nothing for the 5% constraint: the worst filtered cohort still fell 35.8%, and
+the sizing arithmetic is unchanged.
+
+### What D6 does not close
+
+- **The yield conflict.** D5's first finding stands: yield and stability are
+  anti-correlated here, and this run deliberately switched the yield floor off
+  to isolate the price limits. A forward test of the three-limit basket is a
+  different and smaller-armed measurement.
+- **The knob levels.** The run is at the configured limits, once. No grid, and a
+  best-of-grid cell would not have been reportable under the criterion anyway.
+- **Anything about acting on it.** Same rule as every surface here: it names
+  candidates and writes no position.
+
+## D7 — the filing read on the names D5 chose
+
+Deliverable: `dividend/brief.py`. Tests: `tests/value/test_dividend_brief.py`.
+
+```bash
+python -m tradingagents.value.dividend.brief --dry-run
+python -m tradingagents.value.dividend.brief --tickers HD --budget 1.00
+```
+
+D1 reads the payout, D5 reads the price, and between them they do not read a
+sentence of English. The operator's remaining question about a name that cleared
+both is the one the statements cannot answer — is the moat eroding, does MD&A
+hide an accounting problem, does a handful of customers carry the revenue — and
+that is what tier 3 already asks for the business screen.
+
+### Why this is a briefing and not a gate
+
+Phase 6 is the reason the distinction is load-bearing rather than decorative: an
+LLM veto at entry could not be told apart from a random one, and `verdict`
+landed on `caution` for 31 of 44 picks. So nothing in this surface can add a
+name, remove one, or reorder the basket. `select` has already run; its output is
+what prints, with the read attached underneath, and `verdict` renders last
+through the same `alerts.message.briefing` the dossier uses — the two surfaces
+still cannot drift, because there is still one renderer.
+
+A name the analyst dislikes stays on the list. The operator is the filter, which
+is phase 7's answer and not a new one. What the read buys is the sentence the
+operator would otherwise go find in a 200-page filing themselves.
+
+### What it costs, and the three things bounding it
+
+The read is the only paid call in this package. It runs over the **basket**, not
+the pass list — 3 names, not 153; it is cached on the exact prompt like every
+other tier-3 call; and it is charged against `Budget`, which fails closed.
+`--dry-run` names the filings and spends nothing.
+
+### The prompt seam, stated because it is the one dishonest-looking part
+
+`value_analyst.SYSTEM_PROMPT` says the company "has already cleared a
+thirteen-criterion numeric screen". For a dividend candidate that is false — it
+cleared four payout criteria and two price limits. The prompt is a byte-stable
+cache prefix, so editing it would invalidate every assessment already paid for
+on both surfaces, and forking it would buy a second prompt to keep in step.
+
+So the correction goes in the `## Numeric screen result` block instead, which
+opens by naming which screen actually ran and then lists the four criteria with
+their violation and no-data years. The instruction the prompt actually gives —
+do not re-derive the numbers, judge the moat and the language — is correct
+either way, and it is the part that steers the answer.
+
+### The independence contract, widened on purpose
+
+`tests/value/test_dividend.py` failed the moment `brief.py` existed, which is
+the allowlist doing its job. Six entries were added: `analyst.value_analyst`,
+`analyst.schemas`, `edgar.filings`, `edgar.client`, `llm.budget`,
+`alerts.message`. Every one is read-only reuse of tier 3 rather than a second
+copy of it — a second analyst would be a second set of phase 6's mistakes to
+make. The arrow still points outward: nothing in `value/` imports `dividend/`,
+and deleting the directory still deletes the feature.
+
+### D7 result
+
+`pytest tests/value` — 521 passed (17 new), `ruff check .` clean. First live run,
+against the D4 store copy, default knobs (2% yield floor), 2026-08-25:
+
+```
+HD     yield 2.73%, vol 25%, worst -38%, +9.6%/yr    verdict caution, confidence medium
+ITW    yield 2.19%, vol 24%, worst -38%, +9.1%/yr    verdict proceed, confidence low
+LMT    yield 2.37%, vol 24%, worst -37%, +8.5%/yr    verdict caution, confidence low
+```
+
+Three names, three filings, **$0.1125** total — 36,897 prompt and 16,119
+completion tokens against a $2.00 run cap.
+
+The verdict spread is 2 caution / 1 proceed on n=3, which is not evidence about
+anything and is not offered as any. Two things in the run are worth recording.
+
+**The extraction warnings fired on all three, and they were right.** LMT came
+back with no Item 7 at all and a Business section of 4,384 characters against
+88,265 for the largest section; HD's Risk Factors slot contained MD&A text; ITW's
+MD&A opened late and closed early. The analyst said so itself — `evidence gaps`
+on all three name the missing sections, and confidence is `low` on the two worst.
+This is the `suspect` machinery from phase 6 working as designed on a new caller,
+and it is also a standing defect in the extractor that D7 inherits rather than
+fixes.
+
+**The reads are specific, which is the part phase 6 said was worth paying for.**
+LMT's is a single-customer risk the numeric screen cannot see at all — 72% of
+revenue from the US government, 27% from one programme, and an executive order
+that could restrict the dividend itself. HD's is a payout-relevant one: dividend
+growth decelerating 2.2% to 1.3%, buybacks paused to pay down SRS/GMS debt, ROIC
+36.7% to 25.7% in two years. Neither is in the four criteria, and both bear
+directly on whether the payout survives ten more years.
+
+### What D7 does not do
+
+- **It does not measure whether the read helps.** Phase 6 measured the veto and
+  found it unusable; nothing here re-measures anything, because a briefing that
+  changes no selection has no outcome to score. The claim is only that the
+  sentences are specific and cheap.
+- **It does not fix the extractor.** Three of three filings came back suspect.
+  The warnings travel to the operator, which is the minimum, not the repair.
+- **It does not write a position.** Same rule as every surface here. Recording
+  what was actually done with a name is still `decisions record`.

@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from ..store import db
-from . import config, history, weekly
+from . import config, history, runner, weekly
 from .backtest import PORTFOLIO_LOSS_FLOOR, sizing_for_floor
 
 # Daily bars in a year. Only ever used to annualise a standard deviation.
@@ -270,7 +270,29 @@ def render(
     return lines
 
 
-def run(
+@dataclass(frozen=True)
+class Selection:
+    """Everything one D5 run decided, before any of it is turned into text.
+
+    ``run`` renders it; ``brief`` reads the same object to decide which names the
+    LLM is asked about. Separated so the two surfaces cannot disagree about what
+    the basket was -- the alternative is a second copy of the wiring below, which
+    is how two answers to "what did the screen choose" start to exist.
+    """
+
+    chosen: list[Stability]
+    yields: dict[str, float | None]
+    book: Stability | None
+    cuts: Cuts
+    universe: int
+    dropped: int
+    window: tuple[str, str]
+    # The screened outcome per chosen name, so a caller that needs the dividend
+    # criteria behind a pick does not have to screen the name a second time.
+    passes: dict[str, "runner.Outcome"]
+
+
+def selection(
     conn: sqlite3.Connection,
     as_of: str,
     *,
@@ -279,11 +301,10 @@ def run(
     max_volatility: float = config.MAX_VOLATILITY,
     max_drawdown: float = config.MAX_DRAWDOWN,
     size: int = config.BASKET_SIZE,
-    floor: float = PORTFOLIO_LOSS_FLOOR,
     fetch=closes,
     last=history.last_closes,
-) -> list[str]:
-    """Screen offline, price the pass list once, rank, and describe the basket."""
+) -> Selection:
+    """Screen offline, price the pass list once, rank. No rendering, no LLM."""
     passes, _ = weekly.candidates(conn, as_of, exclude=set())
     tickers = [outcome.ticker for outcome in passes]
     start = (date.fromisoformat(as_of) - timedelta(days=round(365.25 * years))).isoformat()
@@ -309,16 +330,53 @@ def run(
         size=size,
     )
 
-    return render(
-        chosen,
-        yields,
-        basket(curves, [row.ticker for row in chosen], start),
+    return Selection(
+        chosen=chosen,
+        yields=yields,
+        book=basket(curves, [row.ticker for row in chosen], start),
+        cuts=cuts,
         universe=len(tickers),
         # Names the screen passed but the download never returned are as
         # uncomparable as the ones that started late, and are counted with them.
         dropped=len(not_comparable) + len(tickers) - len(curves),
-        cuts=cuts,
         window=(start, as_of),
+        passes={outcome.ticker: outcome for outcome in passes},
+    )
+
+
+def run(
+    conn: sqlite3.Connection,
+    as_of: str,
+    *,
+    years: int = config.STABILITY_YEARS,
+    min_yield: float = config.MIN_YIELD,
+    max_volatility: float = config.MAX_VOLATILITY,
+    max_drawdown: float = config.MAX_DRAWDOWN,
+    size: int = config.BASKET_SIZE,
+    floor: float = PORTFOLIO_LOSS_FLOOR,
+    fetch=closes,
+    last=history.last_closes,
+) -> list[str]:
+    """Select, then describe what was selected."""
+    picked = selection(
+        conn,
+        as_of,
+        years=years,
+        min_yield=min_yield,
+        max_volatility=max_volatility,
+        max_drawdown=max_drawdown,
+        size=size,
+        fetch=fetch,
+        last=last,
+    )
+    return render(
+        picked.chosen,
+        picked.yields,
+        picked.book,
+        universe=picked.universe,
+        dropped=picked.dropped,
+        cuts=picked.cuts,
+        window=picked.window,
         floor=floor,
     )
 
