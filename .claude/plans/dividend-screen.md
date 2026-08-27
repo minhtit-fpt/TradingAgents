@@ -1034,7 +1034,10 @@ copy of it — a second analyst would be a second set of phase 6's mistakes to
 make. The arrow still points outward: nothing in `value/` imports `dividend/`,
 and deleting the directory still deletes the feature.
 
-### D7 result
+### D7 result — the first run, read through a broken extractor
+
+Kept as written because it is what sent the work into `edgar/filings.py`. The
+re-read below supersedes every verdict in it.
 
 `pytest tests/value` — 521 passed (17 new), `ruff check .` clean. First live run,
 against the D4 store copy, default knobs (2% yield floor), 2026-08-25:
@@ -1068,13 +1071,79 @@ growth decelerating 2.2% to 1.3%, buybacks paused to pay down SRS/GMS debt, ROIC
 36.7% to 25.7% in two years. Neither is in the four criteria, and both bear
 directly on whether the payout survives ten more years.
 
+### D7 re-read, 2026-08-26, on the repaired extractor
+
+The extractor was fixed the same day (`phase6-llm-veto.md`, "The extractor, third
+round"): a citation written as prose is punctuated exactly like a heading, so the
+cue that separates them sits before the number, not after it. Over 18 cached
+10-Ks the fault rate went 12/18 to 0/18 with no regressions.
+
+Same three names, same knobs, same store, one day later. `pytest tests/value` —
+528 passed, `ruff check .` clean.
+
+| | 2026-08-25, broken text | 2026-08-26, correct text |
+|---|---|---|
+| HD | caution, confidence medium | caution, confidence medium |
+| ITW | **proceed**, confidence **low** | **caution**, confidence **medium** |
+| LMT | caution, confidence **low** | caution, confidence **medium** |
+| `suspect` warnings | 3 of 3 filings | **0 of 3** |
+| cost | $0.1125, 36,897 prompt tokens | $0.1650, 70,812 prompt tokens |
+
+**A verdict changed on text alone.** ITW went `proceed` to `caution` with nothing
+else altered — same prompt template, same model, same numbers in the summary.
+This is phase 6's finding reproduced in the opposite direction: that phase moved
+five of 44 events `caution` -> `proceed` by fixing extraction, and here one of
+three moved back. Neither direction is evidence about the business; both are
+evidence that the analyst's answer tracks which text it was handed, which is the
+argument for the geometry checks rather than against the read.
+
+**Confidence rose where the text was restored.** `low` -> `medium` on the two
+filings that had lost sections. The model's own `evidence_gaps` had named the
+missing sections in the first run, which is the second time in this module's
+history that field has caught a data defect before a person did.
+
+**The reads got specific in a way the first run could not be.** None of the
+following appears anywhere in the 2026-08-25 output: ITW's LIFO-to-FIFO change in
+Q1 2024 booking a one-off $117m reduction in cost of revenue, and the $363m
+Wilsonart gain with a $107m discrete tax benefit worth $1.26 of EPS; LMT's
+reach-forward losses itemised — $950m, $570m, $95m, $140m in 2025, $555m and
+$1.4bn in 2024 — with management warning of more; HD's inventory turns falling
+4.7x to 4.4x.
+
+**Cost rose 1.5x, not 3x.** Prompt tokens doubled because sections that were
+truncated by being broken are now truncated by the budget instead; completion
+tokens barely moved.
+
+### The bottleneck moved, and it moved somewhere worse for this question
+
+`evidence_gaps` no longer complains about wrong sections. It complains about
+`SECTION_TOKEN_BUDGET` — and names what the truncation took:
+
+> LMT: MD&A cut by 45,760 characters, "chưa xem được Liquidity and Cash Flows,
+> Capital Structure, chính sách cổ tức và share repurchase"
+
+That is the passage that answers this screen's question. MD&A is ordered
+operations first, liquidity and capital structure last, so a head-truncation at
+12,000 tokens keeps the segment commentary and drops the dividend policy. HD lost
+27,341 characters of Item 1A the same way.
+
+Not fixed here, because the fix is not obviously "raise the budget": that scales
+cost linearly across every caller of `sections_for`, and the alternative — a
+dividend-specific extraction that keeps MD&A's tail rather than its head — is a
+change to shared code for one surface's benefit. Recorded as the next real
+question rather than guessed at.
+
 ### What D7 does not do
 
 - **It does not measure whether the read helps.** Phase 6 measured the veto and
   found it unusable; nothing here re-measures anything, because a briefing that
   changes no selection has no outcome to score. The claim is only that the
   sentences are specific and cheap.
-- **It does not fix the extractor.** Three of three filings came back suspect.
-  The warnings travel to the operator, which is the minimum, not the repair.
+- **It does not re-measure the 70%.** `alerts.message.briefing` still prints the
+  figure from phase 6's 44 events, measured on the previous extractor. Three of
+  three landed on `caution` here, which is consistent with it and far too small
+  to confirm or move it.
+- **It does not read the whole filing.** The truncation above is live, and the
+  analyst says so on every run.
 - **It does not write a position.** Same rule as every surface here. Recording
   what was actually done with a name is still `decisions record`.
