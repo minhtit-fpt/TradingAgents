@@ -17,3 +17,14 @@ services:
     # and is the thing worth backing up, so it stays visible from the host.
     volumes:
       - ./value-state:/home/appuser/.tradingagents/value
+
+  # The dividend screen's weekly report. Same image, same store, its own
+  # entrypoint -- the host scheduler runs it once a week, after Friday's close.
+  value-dividend-weekly:
+    build: .
+    image: tradingagents-value:latest
+    env_file:
+      - .env
+    entrypoint: ["python", "-m", "tradingagents.value.dividend.weekly"]
+    volumes:
+      - ./value-state:/home/appuser/.tradingagents/value
