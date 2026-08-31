@@ -164,11 +164,27 @@ def measure_all(curves: dict, start: str) -> tuple[list[Stability], list[str]]:
 
 @dataclass(frozen=True)
 class Cuts:
-    """How many names each limit removed, in the order they were applied."""
+    """How many names each limit removed, in the order they were applied.
+
+    ``unpriced`` is carved out of ``unyielding`` rather than added to it. Both
+    populations are removed by the same line of code and for the same defensible
+    reason -- an unmeasured name is not a name that pays enough -- but they are
+    findings about different things. "Yields 1.2%" is about the company and the
+    operator should loosen the floor or accept it; "we could not price it" is
+    about our own data and the operator should re-run. Reporting them as one
+    number is the defect ``runner._why`` already names for the criteria: merging
+    "failed" with "no data" is how ADP reads as a company that cannot cover its
+    dividend when the truth is that EDGAR gave us no capex line.
+
+    Seen live on 2026-08-26: yfinance failed 43 of 153 downloads, ITW and LMT
+    among them, and a basket that had held three names the day before printed
+    one -- with the two absences counted as insufficient yield.
+    """
 
     unyielding: int
     volatile: int
     deep: int
+    unpriced: int = 0
 
 
 def select(
@@ -189,15 +205,18 @@ def select(
     A name whose yield is unknown is cut by the floor rather than passed by it.
     An unpriced name is not a name that pays enough; it is a name nobody
     measured, and letting it through would put a blank where the requirement is.
+    It is counted apart all the same -- see ``Cuts``.
     """
     paying = [row for row in scored if (yields.get(row.ticker) or 0.0) >= min_yield]
     calm = [row for row in paying if row.volatility <= max_volatility]
     shallow = [row for row in calm if abs(row.max_drawdown) <= max_drawdown]
     shallow.sort(key=lambda row: row.annual_return, reverse=True)
+    unpriced = sum(1 for row in scored if yields.get(row.ticker) is None)
     return shallow[:size], Cuts(
-        unyielding=len(scored) - len(paying),
+        unyielding=len(scored) - len(paying) - unpriced,
         volatile=len(paying) - len(calm),
         deep=len(calm) - len(shallow),
+        unpriced=unpriced,
     )
 
 
@@ -234,8 +253,15 @@ def render(
         f"  {universe} names passed the dividend screen; {dropped} not comparable, "
         f"{cuts.unyielding} yield too little, {cuts.volatile} too volatile, "
         f"{cuts.deep} fell too far",
-        "",
     ]
+    # Its own line, not a fourth item in that list, because it is the one count
+    # that asks the operator to re-run rather than to re-think a limit.
+    if cuts.unpriced:
+        lines.append(
+            f"  [!] {cuts.unpriced} more had no price and were cut by the yield floor "
+            "without being measured — a fetch failure, not a low payer. Re-run."
+        )
+    lines.append("")
     if not chosen:
         lines.append("no name cleared all three limits. Loosen one, or take the empty answer.")
         return lines
@@ -383,6 +409,7 @@ def run(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Rank durable payers by how still the price sat")
+    parser.add_argument("--db", default=None, help="override the store path")
     parser.add_argument("--as-of", default=date.today().isoformat())
     parser.add_argument("--years", type=int, default=config.STABILITY_YEARS)
     parser.add_argument("--min-yield", type=float, default=config.MIN_YIELD)
@@ -392,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--loss-floor", type=float, default=PORTFOLIO_LOSS_FLOOR)
     args = parser.parse_args(argv)
 
-    conn = db.connect()
+    conn = db.connect(args.db)
     try:
         lines = run(
             conn,

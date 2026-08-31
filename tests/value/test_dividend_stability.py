@@ -112,7 +112,39 @@ class Select(unittest.TestCase):
             self.rows(), self.yields(BEST=None), min_yield=0.02, size=10
         )
         self.assertNotIn("BEST", [row.ticker for row in unpriced])
-        self.assertEqual(cuts.unyielding, 2)
+
+    def test_an_unpriced_name_is_counted_apart_from_a_name_that_pays_too_little(self):
+        """One number for both is how a fetch failure reads as a low payer.
+
+        Live on 2026-08-26: yfinance failed 43 of 153 downloads and the basket
+        printed one name instead of three, with ITW and LMT counted as yielding
+        too little. Same family as the ADP case ``runner._why`` documents.
+        """
+        _, cuts = stability.select(
+            self.rows(), self.yields(BEST=None), min_yield=0.02, size=10
+        )
+        self.assertEqual(cuts.unpriced, 1)
+        self.assertEqual(cuts.unyielding, 1)
+
+    def test_a_fully_priced_run_reports_no_unpriced_names(self):
+        _, cuts = self.pick(min_yield=0.02)
+        self.assertEqual(cuts.unpriced, 0)
+
+    def test_the_render_tells_the_operator_to_re_run_rather_than_loosen_a_limit(self):
+        lines = stability.render(
+            [],
+            {},
+            None,
+            universe=153,
+            dropped=0,
+            cuts=stability.Cuts(unyielding=81, volatile=23, deep=5, unpriced=43),
+            window=("2016-08-26", "2026-08-26"),
+            floor=0.05,
+        )
+        text = "\n".join(lines)
+        self.assertIn("43 more had no price", text)
+        self.assertIn("Re-run", text)
+        self.assertIn("81 yield too little", text)
 
 
 class Basket(unittest.TestCase):

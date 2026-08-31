@@ -1147,3 +1147,93 @@ question rather than guessed at.
   analyst says so on every run.
 - **It does not write a position.** Same rule as every surface here. Recording
   what was actually done with a name is still `decisions record`.
+
+## D8 — the count that made a fetch failure look like a low payer
+
+Deliverable: `Cuts.unpriced` in `dividend/stability.py`, and `--db` on the same
+surface. Tests: four in `tests/value/test_dividend_stability.py`.
+
+Found by the operator asking the right question about the D7 run: the screen says
+names pass, so why does the LLM come back with nothing?
+
+### The three places names disappear, none of which is the LLM
+
+The read cannot remove a name — `test_an_avoid_verdict_does_not_remove_the_name`
+pins it. Everything happens upstream, and the three causes want three different
+responses:
+
+**1. The store, which is empty of dividends.** `~/.tradingagents/value/value.db`
+holds 683,285 fact rows and **zero** dividend rows. Every result in D4 through D7
+was produced against the scratchpad copy (726 names, 73,180 rows). A screen
+pointed at the live store has nothing to screen, and `--db` did not exist on
+`stability`, so D5 could only ever read the empty one. Added, matching `runner`
+and `brief`.
+
+**2. The yield floor, which is doing 81% of the cutting.** On the D4 store:
+
+```
+passed D1 (a durable payout over ten years)   153
+  cut by the yield floor                      124
+  cut by the volatility limit                  23
+  cut by the drawdown limit                     5
+basket                                          3
+```
+
+Not a defect. It is D5's first finding restated: yield and price stability are
+anti-correlated across this universe, so the operator's income requirement is
+what empties the list. Loosening it is a choice with a measured cost, not a bug
+report.
+
+**3. A price fetch failure, reported as insufficient yield.** This one is the
+defect. On 2026-08-26 yfinance failed 43 of 153 downloads — ITW and LMT among
+them — and a basket that had held three names printed one.
+
+### Why that is the same defect this module already paid for once
+
+`forward_yield` returns `None` honestly, and `select` cuts `None` by the floor
+deliberately: an unpriced name is not a name that pays enough, it is a name
+nobody measured, and letting it through would put a blank where a requirement is.
+Both of those are right and neither changed.
+
+What was wrong is the **count**. `Cuts.unyielding` held two populations that call
+for opposite responses — "this company pays 1.2%", which is a finding about the
+company, and "we could not price it", which is a finding about our own data. One
+number for both is exactly the failure `runner._why` was written to prevent:
+
+> Merging them is how ADP reads as a company that cannot cover its dividend when
+> the truth is that EDGAR gave us no capex line for it.
+
+Four criteria got that treatment in D1. The price limits did not, and the same
+mistake was sitting in the same package.
+
+### The fix
+
+`Cuts.unpriced` is carved **out of** `unyielding`, not added beside it, so the
+two counts still sum to what was removed. It renders on its own line rather than
+as a fourth item in the run of limits, because it is the one count that asks the
+operator to re-run rather than to re-think a limit:
+
+```
+  153 names passed the dividend screen; 118 not comparable, 23 yield too little,
+  7 too volatile, 1 fell too far
+  [!] 4 more had no price and were cut by the yield floor without being measured
+      — a fetch failure, not a low payer. Re-run.
+```
+
+### D8 result
+
+`pytest tests/value` — 531 passed (4 new), `ruff check .` clean. The live run
+above is itself an example: 118 not comparable and 4 unpriced, from a yfinance
+session hammered by a day of repeated runs. Before this change that run reported
+a clean-looking set of limit counts and an empty basket.
+
+### What D8 does not close
+
+- **`dropped` has the same shape, one grade milder.** It merges "the series
+  started late" with "the download returned nothing" — the `Selection` comment
+  says so deliberately, and 118 of them is what the empty basket above actually
+  turned on. Left as it was rather than widened into this change, and named here
+  so it is a known conflation rather than an unexamined one.
+- **It does not make the fetch reliable.** The count tells the operator to
+  re-run. Nothing retries, backs off, or caches a last-known price, and a screen
+  that silently used a stale price would be worse than one that says it failed.
